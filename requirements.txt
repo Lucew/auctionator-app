@@ -5,3 +5,4 @@ SQLAlchemy
 streamlit
 pygsheets
 pandas
+xlsxwriter

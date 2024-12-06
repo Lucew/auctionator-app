@@ -1,3 +1,4 @@
+import numpy as np
 from slpp import slpp as lua
 import os
 import re
@@ -210,25 +211,32 @@ def write_data(input_str: str = None):
 
 
 def price2gold(price: float):
+    # check that price is not None
+    # https://stackoverflow.com/a/944712
+    if not isinstance(price, float) or price != price:
+        return price
+
+    # compute gold etc. from price
     mult = 100
     gold = [0, 0, 0]
-    for _ in range(3):
+    for idx in range(2):
         price, rest = divmod(price, mult)
-        gold.append(rest)
+        gold[idx] = int(rest)
+    gold[-1] = price
     return f'{gold[-1]}g {gold[-2]}s {gold[-3]}k'
 
 
 def db2df(history_dict: dict[tuple[int, str]: list[tuple[int, float]]]):
     # create a dataframe for plotting
-    df_dict = {'name': [], 'price': [], 'date': [], 'Gold': []}
+    df_dict = {'Name': [], 'Price': [], 'Date': [], 'Gold': [], 'Id': []}
     for ((idd, name), sorted_prices) in history_dict.items():
-        df_dict['name'].extend(name for _ in range(len(sorted_prices)))
-        df_dict['price'].extend(price for _, price in sorted_prices)
-        df_dict['date'].extend(date for date, _ in sorted_prices)
+        df_dict['Name'].extend(name for _ in range(len(sorted_prices)))
+        df_dict['Price'].extend(price for _, price in sorted_prices)
+        df_dict['Date'].extend(date for date, _ in sorted_prices)
         df_dict['Gold'].extend(price2gold(price) for _, price in sorted_prices)
+        df_dict['Id'].extend(idd for _ in range(len(sorted_prices)))
     df = pd.DataFrame(df_dict)
-    df['date'] = pd.to_datetime(df['date'], unit='s')
-    print('Hi')
+    df['Date'] = pd.to_datetime(df['Date'], unit='s')
     return df
 
 
