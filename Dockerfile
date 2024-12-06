@@ -5,7 +5,11 @@ LABEL authors="lucas"
 COPY requirements.txt ./requirements.txt
 RUN pip install  -r requirements.txt
 
+# https://docs.streamlit.io/deploy/tutorials/docker
+EXPOSE 8501
+HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health
+
 # set the working directory to the app
 WORKDIR /app
 
-CMD streamlit run app.py --server.port 8080
+CMD ["streamlit", "run", "streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
