@@ -119,7 +119,7 @@ def write_to_database(hist: dict[tuple[int|str, str]: tuple[int, int]]):
                 assert check_query.name == item, f'Something with {item}:{curr_id} is off.'
             except AssertionError as e:
                 logger.error(f'Logging error! AssertionError --> {str(e)}')
-                return False, 'Invalid Items in File (english client?)'
+                return False, f'Invalid Items in File (english client?). Error with Item {item}, Id={curr_id}.'
         else:
             session.add(Item(id=curr_id, name=item))
             session.commit()
