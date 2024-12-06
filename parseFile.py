@@ -222,7 +222,7 @@ def price2gold(price: float):
     for idx in range(2):
         price, rest = divmod(price, mult)
         gold[idx] = int(rest)
-    gold[-1] = price
+    gold[-1] = int(price)
     return f'{gold[-1]}🥇 {gold[-2]:02}🥈 {gold[-3]:02}🥉'
 
 
