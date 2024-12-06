@@ -1,4 +1,4 @@
-import re
+import time
 
 import streamlit as st
 from parseFile import write_data, get_item_prices, db2df, price2gold
@@ -13,6 +13,62 @@ from pandas.api.types import (
     is_object_dtype,
 )
 import urllib.parse
+from streamlit import runtime
+from streamlit.runtime.scriptrunner import get_script_run_ctx
+import logging
+
+
+def get_remote_ip() -> [str|None]:
+    """Get remote ip."""
+
+    try:
+        ctx = get_script_run_ctx()
+        if ctx is None:
+            return None
+
+        session_info = runtime.get_instance().get_client(ctx.session_id)
+        if session_info is None:
+            return None
+    except Exception as e:
+        return None
+    return session_info.request.remote_ip
+
+
+class ContextFilter(logging.Filter):
+    def filter(self, record):
+        record.user_ip = get_remote_ip()
+        return super().filter(record)
+
+
+def init_logging():
+    # Make sure to instantiate the logger only once
+    # otherwise, it will create a StreamHandler at every run
+    # and duplicate the messages
+    # https://stackoverflow.com/a/75437429
+
+    # create a custom logger
+    logger = logging.getLogger("auctionator")
+    if logger.handlers:  # logger is already setup, don't setup again
+        return
+    logger.propagate = False
+    logger.setLevel(logging.INFO)
+
+    # in the formatter, use the variable "user_ip"
+    formatter = logging.Formatter("%(name)s %(asctime)s %(levelname)s [user_ip=%(user_ip)s] - %(message)s")
+
+    # set the ip handler
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO)
+    handler.addFilter(ContextFilter())
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+    # set the file handler
+    handler = logging.FileHandler("auctionator-debug.log")
+    handler.setLevel(logging.INFO)
+    handler.addFilter(ContextFilter())
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 def filter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -80,9 +136,13 @@ def filter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
+
 # set the layout to wide
 st.set_page_config(layout="wide")
 
+# get the logger
+init_logging()
+__logger = logging.getLogger('auctionator')
 
 # make a cached function to get the data
 @st.cache_data
@@ -93,11 +153,10 @@ def get_dataframe():
 # IMPORTANT: Cache the conversion to prevent computation on every rerun
 @st.cache_data
 def convert_df(df, typed: str):
-    if typed == 'text\csv':
+    if typed == r'text\csv':
         return df.to_csv().encode("utf-8")
 
-
-    elif typed == 'application/vnd.ms-excel':
+    elif typed == r'application/vnd.ms-excel':
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
             df.to_excel(writer, index=False, sheet_name='Auctionator')
@@ -113,6 +172,9 @@ uploaded_file = st.sidebar.file_uploader('Upload your LUA file here.')
 # To convert to a string based IO
 if uploaded_file is not None:
 
+    # make the logging
+    __logger.info('A file was uploaded.')
+
     # get the file into a string
     stringio = uploaded_file.getvalue().decode("utf-8")
 
@@ -122,6 +184,7 @@ if uploaded_file is not None:
     # clean the function cache
     # https://stackoverflow.com/a/77676594
     get_dataframe.clear()
+    __logger.info('File is parsed and cache invalidated.')
 
 # get the dataframe
 __df, __name2link = get_dataframe()
@@ -129,17 +192,18 @@ __names = list(__df['Name'].unique())
 
 # make an item selector
 selection = set(st.multiselect('Choose the Items of Interest', options=__names, default=__names[0], ))
-
+__selected_df = __df
 if selection:
+
     # select the items from the dataframe
     __selected_df = __df[__df['Name'].isin(selection)]
     __min_date = __selected_df['Date'].min().to_pydatetime()
     __max_date = __selected_df['Date'].max().to_pydatetime()
 
     # make a date selection
-    date_range =  st.slider('Date Range', __min_date, __max_date+datetime.timedelta(days=1),
-                            step=datetime.timedelta(days=1),
-                            value=(__min_date, __max_date+datetime.timedelta(days=1)))
+    date_range = st.slider('Date Range', __min_date, __max_date+datetime.timedelta(days=1),
+                           step=datetime.timedelta(days=1),
+                           value=(__min_date, __max_date+datetime.timedelta(days=1)))
 
     # create the chard
     __selected_df = __selected_df[(pd.Timestamp(date_range[0]) <= __selected_df['Date']) &
@@ -202,20 +266,24 @@ with st.sidebar:
         raise ValueError('Unspecified download!')
 
     # make a csv download button
-    st.download_button(
+    cs_dwn = st.download_button(
         label="Download data as CSV",
-        data=convert_df(__curr_df, 'text\csv'),
-        file_name=f"{'selected' if download_type == 'Selection' else ''}_data.csv",
+        data=convert_df(__curr_df, r'text\csv'),
+        file_name=f"{'selected_' if download_type == 'Selection' else ''}data.csv",
         mime="text/csv",
         use_container_width = True,
     )
+    if cs_dwn:
+        __logger.info(f'Download CSV-File {"(selection)" if download_type == "Selection" else ""}.')
 
     # Excel download button
     # MIME type: https://stackoverflow.com/a/1964182
-    st.download_button(
+    exc_down = st.download_button(
         label="Download data as XLSX",
-        data=convert_df(__curr_df, 'application/vnd.ms-excel'),
-        file_name=f"{'selected' if download_type == 'Selection' else ''}_data.xlsx",
+        data=convert_df(__curr_df, r'application/vnd.ms-excel'),
+        file_name=f"{'selected_' if download_type == 'Selection' else ''}data.xlsx",
         mime="text/csv",
         use_container_width=True,
     )
+    if exc_down:
+        __logger.info(f'Download XLSX-File {"(selection)" if download_type == "Selection" else ""}.')

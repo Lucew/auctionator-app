@@ -10,6 +10,7 @@ import collections
 import pygsheets
 import pandas as pd
 import urllib.parse
+import logging
 
 
 def parse_data(content: str = None):
@@ -24,8 +25,8 @@ def parse_data(content: str = None):
     # https://github.com/alchem1ster/WotLK-Auctionator/blob/b4e3eb68dcc7cc1142b73d8a978d471bf0d4110a/Auctionator/Auctionator.lua#L503
     __startdate = datetime.datetime.strptime('2008-08-01 00:00:00', '%Y-%m-%d %H:%M:%S').timestamp()
 
-    # go through the text and check where we reach level zero curly bracers, so we know where to cut the different variables
-    # find curly bracers
+    # go through the text and check where we reach level zero curly bracers, so we know where to cut the different
+    # variables (using curly bracer level
     curr_level = 0
     last_index = 0
     variable_dict = dict()
@@ -79,7 +80,8 @@ def parse_data(content: str = None):
         # replace the old dictionary
         history[item] = value_dict
 
-    print(f'Parsing took {time.perf_counter()-__ts: 0.2f}s')
+    logger = logging.getLogger('auctionator')
+    logger.info(f'Parsing took {time.perf_counter()-__ts: 0.2f}s')
     return history
 
 
@@ -132,7 +134,8 @@ def write_to_database(hist: dict[tuple[int|str, str]: tuple[int, int]]):
             if check_query is None:
                 session.add(Price(id=curr_id, unix_timestamp=typed[0], price=stacks[0], stacks=int(stacks[1])))
                 session.commit()
-    print(f'Writing to DB took {time.perf_counter() - __ts: 0.2f}s')
+    logger = logging.getLogger('auctionator')
+    logger.info(f'Writing to DB took {time.perf_counter() - __ts: 0.2f}s')
 
 
 def get_item_prices():
@@ -146,7 +149,8 @@ def get_item_prices():
         prices_dict[(group[1].id, group[1].name)].append((group[0].unix_timestamp, group[0].price/group[0].stacks))
     for idx, val in prices_dict.items():
         val.sort()
-    print(f'Querying the DB took {time.perf_counter() - __ts: 0.2f}s')
+    logger = logging.getLogger('auctionator')
+    logger.info(f'Querying the DB took {time.perf_counter() - __ts: 0.2f}s')
     return prices_dict
 
 
@@ -176,7 +180,8 @@ def write_to_gsheet(prices_dict: dict[tuple[int, str]: list[tuple[int, float]]])
             contents[rx+1][idx] = price
     ranged = f'{get_cell_name(0, 0)}:{get_cell_name(len(prices_dict)*3, max_items)}'
     sheet.update_values(ranged, contents)
-    print(f'Writing to sheet took {time.perf_counter() - __ts: 0.2f}s')
+    logger = logging.getLogger('auctionator')
+    logger.info(f'Writing to sheet took {time.perf_counter() - __ts: 0.2f}s')
 
 
 def get_cell_name(row: int, col: int) -> str:
