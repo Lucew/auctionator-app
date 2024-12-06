@@ -1,3 +1,5 @@
+import re
+
 import streamlit as st
 from parseFile import write_data, get_item_prices, db2df, price2gold
 import altair as alt
@@ -10,6 +12,7 @@ from pandas.api.types import (
     is_numeric_dtype,
     is_object_dtype,
 )
+import urllib.parse
 
 
 def filter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -121,7 +124,7 @@ if uploaded_file is not None:
     get_dataframe.clear()
 
 # get the dataframe
-__df = get_dataframe()
+__df, __name2link = get_dataframe()
 __names = list(__df['Name'].unique())
 
 # make an item selector
@@ -155,7 +158,8 @@ __grouped_df = __grouped_df['Price'].describe().join(
     __grouped_df[['Price']].apply(lambda x: [ele for ele in x.values]).to_frame('Prices'))
 
 # style the dataframe
-__cl_config = {"Prices": st.column_config.LineChartColumn("Prices")}
+__cl_config = {"Prices": st.column_config.LineChartColumn("Prices"),
+               "_index": st.column_config.LinkColumn('Name', display_text=r"[?&]name=([^&#]+)$")}
 __style_format = dict()
 for name in __grouped_df.columns[1:-1]:
     __style_format[name] = price2gold
@@ -173,10 +177,13 @@ else:
 # apply some filters
 __display_df = filter_dataframe(__display_df)
 
+# replace the index names with link indices
+__display_df.index = list(map(__name2link.get, __display_df.index))
+
 # visualize the dataframe
 st.write(f'Description of Price Distribution for {"the selected" if apply_selection else "all"}'
          f' Items (click columns to sort):')
-st.dataframe(__display_df.style.format(__style_format), column_config=__cl_config)
+st.dataframe(__display_df.style.format(__style_format).format_index(urllib.parse.unquote, axis=1), column_config=__cl_config)
 
 # make a sidebar
 with st.sidebar:

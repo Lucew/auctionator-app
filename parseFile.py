@@ -9,6 +9,7 @@ from createDatabase import Item, Price, Base
 import collections
 import pygsheets
 import pandas as pd
+import urllib.parse
 
 
 def parse_data(content: str = None):
@@ -230,15 +231,21 @@ def price2gold(price: float):
 def db2df(history_dict: dict[tuple[int, str]: list[tuple[int, float]]]):
     # create a dataframe for plotting
     df_dict = {'Name': [], 'Price': [], 'Date': [], 'Gold': [], 'Id': []}
+    name2link = dict()
     for ((idd, name), sorted_prices) in history_dict.items():
         df_dict['Name'].extend(name for _ in range(len(sorted_prices)))
         df_dict['Price'].extend(price for _, price in sorted_prices)
         df_dict['Date'].extend(date for date, _ in sorted_prices)
         df_dict['Gold'].extend(price2gold(price) for _, price in sorted_prices)
         df_dict['Id'].extend(idd for _ in range(len(sorted_prices)))
+        name2link[name] = name2dblink(idd, name)
     df = pd.DataFrame(df_dict)
     df['Date'] = pd.to_datetime(df['Date'], unit='s')
-    return df
+    return df, name2link
+
+
+def name2dblink(item_id: int, name: str):
+    return f'https://db.rising-gods.de/?item={item_id}&name={urllib.parse.quote(name)}'
 
 
 def test():
