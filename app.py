@@ -143,8 +143,8 @@ st.set_page_config(layout="wide")
 # get the logger
 init_logging()
 __logger = logging.getLogger('auctionator')
-print(list(st.context.headers.keys()))
-print(st.context.headers['Origin'], st.context.headers['Host'])
+__logger.info(list(st.context.headers.keys()))
+__logger.info(st.context.headers['Origin'], st.context.headers['Host'])
 
 # make a cached function to get the data
 @st.cache_data
