@@ -219,6 +219,7 @@ def price2gold(price: float):
     # compute gold etc. from price
     mult = 100
     gold = [0, 0, 0]
+    price = int(price)
     for idx in range(2):
         price, rest = divmod(price, mult)
         gold[idx] = int(rest)
