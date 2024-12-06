@@ -98,6 +98,7 @@ def pretty_print_hist(hist: dict[tuple[int|str, str]: tuple[int, int]]):
 
 def write_to_database(hist: dict[tuple[int|str, str]: tuple[int, int]]):
     __ts = time.perf_counter()
+    logger = logging.getLogger('auctionator')
     db = sqlalchemy.create_engine('sqlite:///auctionator.db')
     session = sqlalchemy.orm.Session(db)
     Base.metadata.create_all(db)
@@ -111,10 +112,14 @@ def write_to_database(hist: dict[tuple[int|str, str]: tuple[int, int]]):
         # check whether we already have the id or the name
         check_query = session.query(Item).filter_by(id=curr_id).all()
         if check_query:
-            assert len(check_query) == 1, f'Something with {item}:{curr_id} is off.'
-            check_query = check_query[0]
-            assert check_query.id == curr_id, f'Something with {item}:{curr_id} is off.'
-            assert check_query.name == item, f'Something with {item}:{curr_id} is off.'
+            try:
+                assert len(check_query) == 1, f'Something with {item}:{curr_id} is off.'
+                check_query = check_query[0]
+                assert check_query.id == curr_id, f'Something with {item}:{curr_id} is off.'
+                assert check_query.name == item, f'Something with {item}:{curr_id} is off.'
+            except AssertionError as e:
+                logger.error(f'Logging error! AssertionError --> {str(e)}')
+                return False, 'Invalid Items in File (english client?)'
         else:
             session.add(Item(id=curr_id, name=item))
             session.commit()
@@ -134,8 +139,8 @@ def write_to_database(hist: dict[tuple[int|str, str]: tuple[int, int]]):
             if check_query is None:
                 session.add(Price(id=curr_id, unix_timestamp=typed[0], price=stacks[0], stacks=int(stacks[1])))
                 session.commit()
-    logger = logging.getLogger('auctionator')
     logger.info(f'Writing to DB took {time.perf_counter() - __ts: 0.2f}s')
+    return True, 'Success!'
 
 
 def get_item_prices():
@@ -211,9 +216,15 @@ def get_cell_name(row: int, col: int) -> str:
 
 
 def write_data(input_str: str = None):
-    history = parse_data(input_str)
-    write_to_database(history)
+    logger = logging.getLogger('auctionator')
+    try:
+        history = parse_data(input_str)
+    except ValueError as e:
+        logger.error(f'Parsing error: ValueError --> {str(e)}.')
+        return False, 'Invalid Lua file.'
+    write_success = write_to_database(history)
     # write_to_gsheet(prices_dict)
+    return write_success
 
 
 def price2gold(price: float):

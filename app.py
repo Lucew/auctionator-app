@@ -169,12 +169,17 @@ if uploaded_file is not None:
     stringio = uploaded_file.getvalue().decode("utf-8")
 
     # parse the string
-    write_data(stringio)
+    __success_val, __succes_str = write_data(stringio)
+    if __success_val:
+        st.sidebar.write(__succes_str)
+    else:
+        st.sidebar.warning(__succes_str, icon="⚠️")
 
     # clean the function cache
-    # https://stackoverflow.com/a/77676594
-    get_dataframe.clear()
-    __logger.info('File is parsed and cache invalidated.')
+    if __success_val:
+        # https://stackoverflow.com/a/77676594
+        get_dataframe.clear()
+        __logger.info('File is parsed and cache invalidated.')
 
 # get the dataframe
 __df, __name2link = get_dataframe()
