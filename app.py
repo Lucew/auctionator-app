@@ -136,7 +136,7 @@ __logger = logging.getLogger('auctionator')
 
 # create the header and initial explanation
 st.title('WoW Auctionator Analyzer')
-st.write('This app analyzes your auctionator.lua (WoW 3.3.5a) file and write the item prices to a database.'
+st.write('This app analyzes your auctionator.lua (WoW 3.3.5a) file and writes the item prices to a database.'
          ' Using this information one can analyze long term item prices and some statistical properties.'
          ' You can download all collected data on the left. This is a private Project. Please use with Caution!')
 
