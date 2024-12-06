@@ -1,0 +1,7 @@
+altair
+seaborn
+SLPP
+SQLAlchemy
+streamlit
+pygsheets
+pandas

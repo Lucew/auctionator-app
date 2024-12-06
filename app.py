@@ -1,4 +1,3 @@
-import pandas as pd
 import streamlit as st
 from parseFile import write_data, get_item_prices, db2df
 import altair as alt
