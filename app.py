@@ -138,7 +138,7 @@ __logger = logging.getLogger('auctionator')
 st.title('WoW Auctionator Analyzer')
 st.write('This app analyzes your auctionator.lua (WoW 3.3.5a) file and writes the item prices to a database.'
          ' Using this information one can analyze long term item prices and some statistical properties.'
-         ' You can download all collected data on the left. This is a private Project. Please use with Caution!')
+         ' You can download all collected data on the left. This is a private project. Please use with caution!')
 
 # make a cached function to get the data
 @st.cache_data
