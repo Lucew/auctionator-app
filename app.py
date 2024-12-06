@@ -144,7 +144,7 @@ st.set_page_config(layout="wide")
 init_logging()
 __logger = logging.getLogger('auctionator')
 __logger.info(list(st.context.headers.keys()))
-__logger.info(st.context.headers['Origin'], st.context.headers['Host'])
+__logger.info(st.context.headers['X-Real-Ip'])
 
 # make a cached function to get the data
 @st.cache_data
