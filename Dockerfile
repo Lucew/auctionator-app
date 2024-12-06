@@ -5,10 +5,6 @@ LABEL authors="lucas"
 COPY requirements.txt ./requirements.txt
 RUN pip install  -r requirements.txt
 
-# https://docs.streamlit.io/deploy/tutorials/docker
-EXPOSE 8501
-HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health
-
 # set the working directory to the app
 WORKDIR /app
 
