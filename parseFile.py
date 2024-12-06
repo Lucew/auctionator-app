@@ -223,7 +223,7 @@ def price2gold(price: float):
         price, rest = divmod(price, mult)
         gold[idx] = int(rest)
     gold[-1] = price
-    return f'{gold[-1]}[G] {gold[-2]}[S] {gold[-3]}[K]'
+    return f'{gold[-1]}🥇 {gold[-2]}🥈 {gold[-3]}🥉'
 
 
 def db2df(history_dict: dict[tuple[int, str]: list[tuple[int, float]]]):
