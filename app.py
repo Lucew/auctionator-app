@@ -134,6 +134,12 @@ st.set_page_config(layout="wide", page_title="Autionator")
 init_logging()
 __logger = logging.getLogger('auctionator')
 
+# create the header and initial explanation
+st.title('WoW Auctionator Analyzer')
+st.write('This app analyzes your auctionator.lua (WoW 3.3.5a) file and write the item prices to a database.'
+         ' Using this information one can analyze long term item prices and some statistical properties.'
+         ' You can download all collected data on the left. This is a private Project. Please use with Caution!')
+
 # make a cached function to get the data
 @st.cache_data
 def get_dataframe():
