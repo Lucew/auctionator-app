@@ -206,9 +206,11 @@ if selection:
                            step=datetime.timedelta(days=1),
                            value=(__min_date, __max_date+datetime.timedelta(days=1)))
 
-    # create the chard
+    # apply the time selection
     __selected_df = __selected_df[(pd.Timestamp(date_range[0]) <= __selected_df['Date']) &
                                   (__selected_df['Date'] <= pd.Timestamp(date_range[1]))]
+
+    # make the line chart
     c = alt.Chart(__selected_df).mark_line(point=True).encode(x="Date", y="Price",
                                                               color=alt.Color("Name").legend(orient="bottom",
                                                                                              labelLimit=0,
@@ -224,7 +226,7 @@ __grouped_df = __grouped_df['Price'].describe().join(
 
 # style the dataframe
 __cl_config = {"Prices": st.column_config.LineChartColumn("Prices"),
-               "_index": st.column_config.LinkColumn('Name', display_text=r"[?&]name=([^&#]+)$")}
+               "_index": st.column_config.LinkColumn('Name', display_text=r"[?&]name=([^&#]+)$"),}
 __style_format = dict()
 for name in __grouped_df.columns[1:-1]:
     __style_format[name] = price2gold
