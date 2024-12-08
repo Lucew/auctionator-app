@@ -126,23 +126,6 @@ def filter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def save_value(key):
-    st.session_state[key] = st.session_state["__my_"+key]
-
-
-# set the layout to wide
-st.set_page_config(layout="wide", page_title="Autionator")
-
-# get the logger
-init_logging()
-__logger = logging.getLogger('auctionator')
-
-# create the header and initial explanation
-st.title('WoW Auctionator Analyzer')
-st.write('This app analyzes your auctionator.lua (WoW 3.3.5a) file and writes the item prices to a database.'
-         ' Using this information one can analyze long term item prices and some statistical properties.'
-         ' You can download all collected data on the left. This is a private project. Please use with caution!')
-
 # make a cached function to get the data
 @st.cache_data
 def get_dataframe():
@@ -164,150 +147,177 @@ def convert_df(df, typed: str):
         raise ValueError('Unrecognized download type!')
 
 
-# create a file upload
-st.sidebar.header('File Upload')
-uploaded_file = st.sidebar.file_uploader('Upload your LUA file here.')
+def analyzer_page():
 
-# To convert to a string based IO
-if uploaded_file is not None:
+    # get the logger
+    logger = logging.getLogger('auctionator')
 
-    # make the logging
-    __logger.info('A file was uploaded.')
+    # create the header and initial explanation
+    st.title('WoW Auctionator Analyzer')
+    st.write('This app analyzes your auctionator.lua (WoW 3.3.5a) file and writes the item prices to a database.'
+             ' Using this information one can analyze long term item prices and some statistical properties.'
+             ' You can download all collected data on the left. This is a private project. Please use with caution!')
 
-    # get the file into a string
-    stringio = uploaded_file.getvalue().decode("utf-8")
+    # create a file upload
+    st.sidebar.header('File Upload')
+    uploaded_file = st.sidebar.file_uploader('Upload your LUA file here.')
 
-    # parse the string
-    __success_val, __succes_str = write_data(stringio)
-    if __success_val:
-        st.sidebar.write(__succes_str)
+    # To convert to a string based IO
+    if uploaded_file is not None:
+
+        # make the logging
+        logger.info('A file was uploaded.')
+
+        # get the file into a string
+        stringio = uploaded_file.getvalue().decode("utf-8")
+
+        # parse the string
+        success_val, succes_str = write_data(stringio)
+        if success_val:
+            st.sidebar.write(succes_str)
+        else:
+            st.sidebar.warning(succes_str, icon="⚠️")
+
+        # clean the function cache
+        if success_val:
+            # https://stackoverflow.com/a/77676594
+            get_dataframe.clear()
+            logger.info('File is parsed and cache invalidated.')
+
+    # get the dataframe
+    df, name2link = get_dataframe()
+    names = list(df['Name'].unique())
+
+    # make an item selector with regular expression filter
+    col1, col2 = st.columns(2)
+    regular_matched_items = []
+    with col2:
+        regular_expression = st.text_input('Input (regular) filter expressions for the items.')
+        if regular_expression:
+            try:
+                regular_expression = re.compile(regular_expression)
+                regular_matched_items = list(filter(lambda x: bool(regular_expression.findall(x)), names))
+            except re.error as e:
+                st.warning(f'Regex Pattern was not valid: {str(e)}', icon="⚠️")
+    with col1:
+
+        # make the multiselect and keep the session state
+        default_vals = st.session_state.get("multi_select_items", names[:1])
+        default_vals.extend(regular_matched_items)
+        selection = set(st.multiselect('Choose the items of interest', options=names, default=default_vals,
+                                       key="multi_select_items"),)
+
+    # create the selection within the dataframe
+    selected_df = df
+    if selection:
+
+        # select the items from the dataframe
+        selected_df = df[df['Name'].isin(selection)]
+        min_date = selected_df['Date'].min().to_pydatetime()
+        max_date = selected_df['Date'].max().to_pydatetime()
+
+        # make a date selection
+        time1, time2 = st.slider('Date Range', min_date, max_date+datetime.timedelta(days=1),
+                                 step=datetime.timedelta(days=1), value=(min_date, max_date+datetime.timedelta(days=1)))
+
+        # apply the time selection
+        selected_df = selected_df[(pd.Timestamp(time1) <= selected_df['Date']) &
+                                  (selected_df['Date'] <= pd.Timestamp(time2))]
+
+        # make the line chart
+        c = alt.Chart(selected_df).mark_line(point=True).encode(x="Date", y="Price",
+                                                                  color=alt.Color("Name").legend(orient="bottom",
+                                                                                                 labelLimit=0,
+                                                                                                 symbolLimit=0,
+                                                                                                 columns=4),
+                                                                  tooltip=["Date", "Name", 'Gold'])
+        st.altair_chart(c, use_container_width=True)
+
+    # create an overview per item
+    grouped_df = df.groupby('Name')
+    grouped_df = grouped_df['Price'].describe().join(
+        grouped_df['Price'].apply(lambda x: [ele for ele in x.values]).to_frame('Prices'))
+
+    # style the dataframe
+    cl_config = {"Prices": st.column_config.LineChartColumn("Prices"),
+                 "_index": st.column_config.LinkColumn('Name', display_text=r"[?&]name=([^&#]+)$")}
+    style_format = dict()
+    for name in grouped_df.columns[1:-1]:
+        style_format[name] = price2gold
+    style_format['count'] = int
+
+    # make a checkbox whether to apply selection
+    apply_selection = st.checkbox('Apply Selection', value=False)
+
+    # display the dataframe
+    if apply_selection:
+        display_df = grouped_df.loc[list(selection)]
     else:
-        st.sidebar.warning(__succes_str, icon="⚠️")
+        display_df = grouped_df
 
-    # clean the function cache
-    if __success_val:
-        # https://stackoverflow.com/a/77676594
-        get_dataframe.clear()
-        __logger.info('File is parsed and cache invalidated.')
+    # apply some filters
+    display_df = filter_dataframe(display_df)
 
-# get the dataframe
-__df, __name2link = get_dataframe()
-__names = list(__df['Name'].unique())
+    # replace the index names with link indices
+    display_df.index = list(map(name2link.get, display_df.index))
 
-# make an item selector with regular expression filter
-col1, col2 = st.columns(2)
-regular_matched_items = []
-with col2:
-    regular_expression = st.text_input('Input (regular) filter expressions for the items.')
-    if regular_expression:
-        try:
-            regular_expression = re.compile(regular_expression)
-            regular_matched_items = list(filter(lambda x: bool(regular_expression.findall(x)), __names))
-        except re.error as __e:
-            st.warning(f'Regex Pattern was not valid: {str(__e)}', icon="⚠️")
-with col1:
+    # visualize the dataframe
+    st.write(f'Description of Price Distribution for {"the selected" if apply_selection else "all"}'
+             f' Items (click columns to sort):')
+    st.dataframe(display_df.style.format(style_format).format_index(urllib.parse.unquote, axis=1),
+                 column_config=cl_config)
 
-    # make the multiselect and keep the session state
-    default_vals = st.session_state.get("multi_select_items", __names[:1])
-    default_vals.extend(regular_matched_items)
-    selection = set(st.multiselect('Choose the items of interest', options=__names, default=default_vals,
-                                   key="multi_select_items"),)
+    # make a sidebar
+    with st.sidebar:
 
-# create the selection within the dataframe
-__selected_df = __df
-if selection:
+        st.sidebar.header('File Download')
 
-    # select the items from the dataframe
-    __selected_df = __df[__df['Name'].isin(selection)]
-    __min_date = __selected_df['Date'].min().to_pydatetime()
-    __max_date = __selected_df['Date'].max().to_pydatetime()
+        # make a selection for the sidebar
+        download_type = st.selectbox('Choose the download type', options=['All', 'Selection'])
 
-    # make a date selection
-    date_range = st.slider('Date Range', __min_date, __max_date+datetime.timedelta(days=1),
-                           step=datetime.timedelta(days=1),
-                           value=(__min_date, __max_date+datetime.timedelta(days=1)))
+        # make the dataframe selection
+        if download_type == 'All':
+            curr_df = df
+        elif download_type == 'Selection':
+            curr_df = selected_df
+        else:
+            raise ValueError('Unspecified download!')
 
-    # apply the time selection
-    __selected_df = __selected_df[(pd.Timestamp(date_range[0]) <= __selected_df['Date']) &
-                                  (__selected_df['Date'] <= pd.Timestamp(date_range[1]))]
+        # make a csv download button
+        cs_dwn = st.download_button(
+            label="Download data as CSV",
+            data=convert_df(curr_df, r'text\csv'),
+            file_name=f"{'selected_' if download_type == 'Selection' else ''}data.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        if cs_dwn:
+            logger.info(f'Download CSV-File {"(selection)" if download_type == "Selection" else ""}.')
 
-    # make the line chart
-    c = alt.Chart(__selected_df).mark_line(point=True).encode(x="Date", y="Price",
-                                                              color=alt.Color("Name").legend(orient="bottom",
-                                                                                             labelLimit=0,
-                                                                                             symbolLimit=0,
-                                                                                             columns=4),
-                                                              tooltip=["Date", "Name", 'Gold'])
-    st.altair_chart(c, use_container_width=True)
+        # Excel download button
+        # MIME type: https://stackoverflow.com/a/1964182
+        exc_down = st.download_button(
+            label="Download data as XLSX",
+            data=convert_df(curr_df, r'application/vnd.ms-excel'),
+            file_name=f"{'selected_' if download_type == 'Selection' else ''}data.xlsx",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        if exc_down:
+            logger.info(f'Download XLSX-File {"(selection)" if download_type == "Selection" else ""}.')
 
-# create an overview per item
-__grouped_df = __df.groupby('Name')
-__grouped_df = __grouped_df['Price'].describe().join(
-    __grouped_df[['Price']].apply(lambda x: [ele for ele in x.values]).to_frame('Prices'))
 
-# style the dataframe
-__cl_config = {"Prices": st.column_config.LineChartColumn("Prices"),
-               "_index": st.column_config.LinkColumn('Name', display_text=r"[?&]name=([^&#]+)$"),}
-__style_format = dict()
-for name in __grouped_df.columns[1:-1]:
-    __style_format[name] = price2gold
-__style_format['count'] = int
+# set the layout to wide
+st.set_page_config(layout="wide", page_title="Autionator")
 
-# make a checkbox whether to apply selection
-apply_selection = st.checkbox('Apply Selection', value=False)
+# get the logger
+init_logging()
 
-# display the dataframe
-if apply_selection:
-    __display_df = __grouped_df.loc[list(selection)]
-else:
-    __display_df = __grouped_df
-
-# apply some filters
-__display_df = filter_dataframe(__display_df)
-
-# replace the index names with link indices
-__display_df.index = list(map(__name2link.get, __display_df.index))
-
-# visualize the dataframe
-st.write(f'Description of Price Distribution for {"the selected" if apply_selection else "all"}'
-         f' Items (click columns to sort):')
-st.dataframe(__display_df.style.format(__style_format).format_index(urllib.parse.unquote, axis=1), column_config=__cl_config)
-
-# make a sidebar
-with st.sidebar:
-
-    st.sidebar.header('File Download')
-
-    # make a selection for the sidebar
-    download_type = st.selectbox('Choose the download type', options=['All', 'Selection'])
-
-    # make the dataframe selection
-    if download_type == 'All':
-        __curr_df = __df
-    elif download_type == 'Selection':
-        __curr_df = __selected_df
-    else:
-        raise ValueError('Unspecified download!')
-
-    # make a csv download button
-    cs_dwn = st.download_button(
-        label="Download data as CSV",
-        data=convert_df(__curr_df, r'text\csv'),
-        file_name=f"{'selected_' if download_type == 'Selection' else ''}data.csv",
-        mime="text/csv",
-        use_container_width = True,
-    )
-    if cs_dwn:
-        __logger.info(f'Download CSV-File {"(selection)" if download_type == "Selection" else ""}.')
-
-    # Excel download button
-    # MIME type: https://stackoverflow.com/a/1964182
-    exc_down = st.download_button(
-        label="Download data as XLSX",
-        data=convert_df(__curr_df, r'application/vnd.ms-excel'),
-        file_name=f"{'selected_' if download_type == 'Selection' else ''}data.xlsx",
-        mime="text/csv",
-        use_container_width=True,
-    )
-    if exc_down:
-        __logger.info(f'Download XLSX-File {"(selection)" if download_type == "Selection" else ""}.')
+# make the page
+st.sidebar.title('Navigation')
+st.sidebar.header('Application')
+__choice = st.sidebar.selectbox('Choose Application', options=['Analyzer', 'Crafter'])
+if __choice == 'Analyzer':
+    analyzer_page()
+elif __choice == 'Crafter':
+    st.write('To come.')
