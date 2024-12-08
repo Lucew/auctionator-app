@@ -155,4 +155,4 @@ fabric.properties
 ~$*
 
 # ignore the json
-example/*.json
+ressources/*.json

@@ -1,0 +1,8 @@
+# Converting the mysql files
+------------------------------------------------------------------------------------------------------------------------
+https://pypi.org/project/mysql-to-sqlite3/  # conversion script
+https://github.com/thatsmybis/wotlk-item-db/blob/main/thatsmybis/table_dumps/items.sql  # database
+https://factorypattern.com/converting-database-from-mysql-to-sqllite/  # commands
+simply run "docker compose up" in the ressources folder
+
+

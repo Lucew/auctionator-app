@@ -1,5 +1,3 @@
-import time
-
 import streamlit as st
 from parseFile import write_data, get_item_prices, db2df, price2gold
 import altair as alt
@@ -14,6 +12,7 @@ from pandas.api.types import (
 )
 import urllib.parse
 import logging
+import re
 
 
 def get_remote_ip() -> [str|None]:
@@ -127,6 +126,10 @@ def filter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def save_value(key):
+    st.session_state[key] = st.session_state["__my_"+key]
+
+
 # set the layout to wide
 st.set_page_config(layout="wide", page_title="Autionator")
 
@@ -191,8 +194,26 @@ if uploaded_file is not None:
 __df, __name2link = get_dataframe()
 __names = list(__df['Name'].unique())
 
-# make an item selector
-selection = set(st.multiselect('Choose the Items of Interest', options=__names, default=__names[0], ))
+# make an item selector with regular expression filter
+col1, col2 = st.columns(2)
+regular_matched_items = []
+with col2:
+    regular_expression = st.text_input('Input (regular) filter expressions for the items.')
+    if regular_expression:
+        try:
+            regular_expression = re.compile(regular_expression)
+            regular_matched_items = list(filter(lambda x: bool(regular_expression.findall(x)), __names))
+        except re.error as __e:
+            st.warning(f'Regex Pattern was not valid: {str(__e)}', icon="⚠️")
+with col1:
+
+    # make the multiselect and keep the session state
+    default_vals = st.session_state.get("multi_select_items", __names[:1])
+    default_vals.extend(regular_matched_items)
+    selection = set(st.multiselect('Choose the items of interest', options=__names, default=default_vals,
+                                   key="multi_select_items"),)
+
+# create the selection within the dataframe
 __selected_df = __df
 if selection:
 

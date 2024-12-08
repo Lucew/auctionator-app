@@ -1,0 +1,25 @@
+version: '3.1'
+
+services:
+  mysql:
+    build:
+      dockerfile: Dockerfile
+    ports:
+     - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_USER: dbuser
+      MYSQL_PASSWORD: userpass
+      MYSQL_DATABASE: myimage_db
+  mysql2sqlite3:
+    depends_on:
+      - mysql
+    build:
+      dockerfile: Dockerfile_Linux
+    volumes:
+      - ./:/data
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_USER: dbuser
+      MYSQL_PASSWORD: userpass
+      MYSQL_DATABASE: myimage_db

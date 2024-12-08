@@ -1,0 +1,8 @@
+FROM ubuntu:22.04
+RUN apt-get update -y
+RUN apt-get upgrade -y
+RUN apt-get install -y curl
+RUN curl -o mysql2sqlite https://raw.githubusercontent.com/dumblob/mysql2sqlite/master/mysql2sqlite
+RUN chmod +x mysql2sqlite
+RUN apt-get install -y sqlite3
+CMD ./mysql2sqlite data/items.sql | sqlite3 data/my_database.db

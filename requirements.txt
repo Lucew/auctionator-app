@@ -6,3 +6,8 @@ streamlit
 pygsheets
 pandas
 xlsxwriter
+beautifulsoup4
+requests
+
+# for transfering the items database
+mysql-to-sqlite3

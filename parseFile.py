@@ -18,7 +18,7 @@ def parse_data(content: str = None):
 
     if content is None:
         # read the file into memory
-        with open(os.path.join('example', 'Auctionator.lua'), encoding='UTF-8') as filet:
+        with open(os.path.join('ressources', 'Auctionator.lua'), encoding='UTF-8') as filet:
             content = filet.read()
 
     # get the starting time für auctionator data
@@ -110,19 +110,23 @@ def write_to_database(hist: dict[tuple[int|str, str]: tuple[int, int]]):
         curr_id = int(value_dict['is'][0])
 
         # check whether we already have the id or the name
-        check_query = session.query(Item).filter_by(id=curr_id).all()
+        check_query = session.query(Item).filter_by(item_id=curr_id).all()
         if check_query:
             try:
-                assert len(check_query) == 1, f'Something with {item}:{curr_id} is off.'
-                check_query = check_query[0]
-                assert check_query.id == curr_id, f'Something with {item}:{curr_id} is off.'
-                assert check_query.name == item, f'Something with {item}:{curr_id} is off.'
+                assert check_query[0].item_id == curr_id, f'Something with {item}:{curr_id} is off.'
+
+                # check whether we are missing german names in the database and the name is german
+                # then we update the name
+                for itt in check_query:
+                    if itt.name_de == "" and item != itt.name:
+                        itt.name_de = item
             except AssertionError as e:
                 logger.error(f'Logging error! AssertionError --> {str(e)}')
                 return False, f'Invalid Items in File (english client?). Error with Item {item}, Id={curr_id}.'
         else:
-            session.add(Item(id=curr_id, name=item))
-            session.commit()
+            error_str = f'Invalid Items in File - Id Unknown! Error with Item {item}, Id={curr_id}.'
+            logger.error(f'Logging error! --> {error_str}')
+            return False, error_str
 
         for typed, stacks in value_dict.items():
 
@@ -138,7 +142,7 @@ def write_to_database(hist: dict[tuple[int|str, str]: tuple[int, int]]):
             check_query = session.query(Price).filter_by(id=curr_id, unix_timestamp=typed[0]).one_or_none()
             if check_query is None:
                 session.add(Price(id=curr_id, unix_timestamp=typed[0], price=stacks[0], stacks=int(stacks[1])))
-                session.commit()
+    session.commit()
     logger.info(f'Writing to DB took {time.perf_counter() - __ts: 0.2f}s')
     return True, 'Success!'
 
@@ -148,10 +152,11 @@ def get_item_prices():
     db = sqlalchemy.create_engine('sqlite:///auctionator.db')
     session = sqlalchemy.orm.Session(db)
     Base.metadata.create_all(db)
-    grouped_prices = session.query(Price, Item).filter(Price.id == Item.id).all()
+    grouped_prices = session.query(Price, Item).filter(Price.id == Item.item_id).all()
     prices_dict = collections.defaultdict(list)
     for group in grouped_prices:
-        prices_dict[(group[1].id, group[1].name)].append((group[0].unix_timestamp, group[0].price/group[0].stacks))
+        prices_dict[(group[1].item_id, group[1].name_de if group[1].name_de else group[1].name)].append(
+            (group[0].unix_timestamp, group[0].price/group[0].stacks))
     for idx, val in prices_dict.items():
         val.sort()
     logger = logging.getLogger('auctionator')
@@ -164,7 +169,7 @@ def write_to_gsheet(prices_dict: dict[tuple[int, str]: list[tuple[int, float]]])
     # authorization
     # if you are using service account make sure to share the sheet with that account. only then you can access then
     # see account in the json file
-    gc = pygsheets.authorize(service_file=os.path.join('example', 'auctionator-443900-c59258f330b3.json'))
+    gc = pygsheets.authorize(service_file=os.path.join('ressources', 'auctionator-443900-c59258f330b3.json'))
 
     # open the google spreadsheet
     sheet = gc.open('Auctionator')[0]
