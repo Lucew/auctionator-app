@@ -160,8 +160,29 @@ def get_item_prices():
     for idx, val in prices_dict.items():
         val.sort()
     logger = logging.getLogger('auctionator')
-    logger.info(f'Querying the DB took {time.perf_counter() - __ts: 0.2f}s')
+    logger.info(f'Querying the DB for prices took {time.perf_counter() - __ts: 0.2f}s')
     return prices_dict
+
+
+def get_items():
+    __ts = time.perf_counter()
+    db = sqlalchemy.create_engine('sqlite:///auctionator.db')
+    session = sqlalchemy.orm.Session(db)
+    Base.metadata.create_all(db)
+    result = session.execute(sqlalchemy.select(Item.item_id, Item.name, Item.name_de)).all()
+    item_dict = {rs.item_id: (rs.name, rs.name_de) for rs in result}
+    logger = logging.getLogger('auctionator')
+    logger.info(f'Querying the DB for all items took {time.perf_counter() - __ts: 0.2f}s')
+    return item_dict
+
+
+def get_most_recent_item_price():
+    __ts = time.perf_counter()
+    db = sqlalchemy.create_engine('sqlite:///auctionator.db')
+    session = sqlalchemy.orm.Session(db)
+    Base.metadata.create_all(db)
+    recent_price = session.execute(sqlalchemy.text('SELECT i.item_id, p.price FROM prices p JOIN items i ON p.id == i.item_id WHERE p.unix_timestamp == (SELECT MIN(unix_timestamp) FROM prices p2 WHERE p2.id == p.id)')).all()
+    return dict(recent_price)
 
 
 def write_to_gsheet(prices_dict: dict[tuple[int, str]: list[tuple[int, float]]]):
@@ -235,7 +256,7 @@ def write_data(input_str: str = None):
 def price2gold(price: float):
     # check that price is not None
     # https://stackoverflow.com/a/944712
-    if not isinstance(price, float) or price != price:
+    if not (isinstance(price, float), isinstance(price, int)) or price != price:
         return price
 
     # compute gold etc. from price

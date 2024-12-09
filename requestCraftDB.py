@@ -4,6 +4,7 @@
 import requests
 import re
 from bs4 import BeautifulSoup
+import sys
 
 
 class BaseNode:
@@ -49,17 +50,20 @@ class BaseNode:
     def __str__(self):
         return f'{self.__class__} id={self.id} number={self.required_amount} {self.name if self.name else ""}'
 
-    def print_subtree(self, indent_width: int = 4, indent: str = ""):
+    def print_subtree(self, indent_width: int = 4, indent: str = "", buffer=None):
+        if buffer is None:
+            buffer = sys.stdout
         # https://stackoverflow.com/a/51920869
-        print(self)
+        print(self, file=buffer)
         children = list(self.children.values())
         if not children:
             return
         for child in children[:-1]:
-            print(f'{indent}├{"─" * indent_width}', end="")
-            child.print_subtree(indent_width, f'{indent}│{" " * indent_width}')
-        print(f'{indent}└{"─" * indent_width}', end="")
-        children[-1].print_subtree(indent_width, f'{indent}{" " * (indent_width+1)}')
+            print(f'{indent}├{"─" * indent_width}', end="", file=buffer)
+            child.print_subtree(indent_width, f'{indent}│{" " * indent_width}', buffer=buffer)
+        print(f'{indent}└{"─" * indent_width}', end="", file=buffer)
+        children[-1].print_subtree(indent_width, f'{indent}{" " * (indent_width+1)}', buffer=buffer)
+        return buffer
 
 
 class SpellNode(BaseNode):
@@ -87,6 +91,12 @@ def create_item_craft_graph(item_id: int):
 
     # get the spells that belong to the item
     line = [ele for ele in recipe_request.text.split('\n') if ele.strip().startswith('var _ = g_spells;')]
+
+    # check whether we can craft the item
+    if not line:
+        return root
+
+    # check that we found one line
     assert len(line) == 1, 'Line is not long enough.'
     line = line[0]
     spells = [ele[2:-3] for ele in re.findall(r"_\[\d+\]=\{", line)]
@@ -126,6 +136,7 @@ def create_item_craft_graph(item_id: int):
             element_link = table_row.find('a').get('href')
             element_type, element_id = element_link.split('=')
             element_type = element_type[1:]
+            element_id = int(element_id)
 
             # get the number of elements
             number_elements = int(re.findall(r"\d+", table_row.text)[0])
@@ -157,7 +168,6 @@ def create_item_craft_graph(item_id: int):
 
             # add to parent stack
             parent_stack.append((curr_node, level))
-    root.print_subtree()
     return root
 
 
