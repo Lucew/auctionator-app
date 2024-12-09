@@ -1,3 +1,5 @@
+import time
+
 import streamlit as st
 import altair as alt
 import io
@@ -13,6 +15,8 @@ import urllib.parse
 import logging
 import re
 import collections
+import os
+
 
 import requestCraftDB as rcd
 import parseFile as pf
@@ -189,16 +193,13 @@ def item_selector(names: list[str], multiselect: bool = True):
     return selection
 
 
-def analyzer_page():
-
+def side_bar():
     # get the logger
     logger = logging.getLogger('auctionator')
 
-    # create the header and initial explanation
-    st.title('WoW Auctionator Analyzer')
-    st.write('This app analyzes your auctionator.lua (WoW 3.3.5a) file and writes the item prices to a database.'
-             ' Using this information one can analyze long term item prices and some statistical properties.'
-             ' You can download all collected data on the left. This is a private project. Please use with caution!')
+    st.sidebar.title('Navigation')
+    st.sidebar.header('Application')
+    choice = st.sidebar.selectbox('Choose Application', options=['Analyzer', 'Crafter'])
 
     # create a file upload
     st.sidebar.header('File Upload')
@@ -216,7 +217,15 @@ def analyzer_page():
         # parse the string
         success_val, succes_str = pf.write_data(stringio)
         if success_val:
+
+            # write the information to the databsae
             st.sidebar.write(succes_str)
+
+            # save the file onto the disc
+            file_path = os.path.join(os.getcwd(), 'save', f'{time.time()}_auctionator.lua')
+            if not os.path.isfile(file_path):
+                with open(file_path, 'w') as filet:
+                    filet.write(stringio)
         else:
             st.sidebar.warning(succes_str, icon="⚠️")
 
@@ -225,6 +234,19 @@ def analyzer_page():
             # https://stackoverflow.com/a/77676594
             get_dataframe.clear()
             logger.info('File is parsed and cache invalidated.')
+    return choice
+
+
+def analyzer_page():
+
+    # get the logger
+    logger = logging.getLogger('auctionator')
+
+    # create the header and initial explanation
+    st.title('WoW Auctionator Analyzer')
+    st.write('This app analyzes your auctionator.lua (WoW 3.3.5a) file and writes the item prices to a database.'
+             ' Using this information one can analyze long term item prices and some statistical properties.'
+             ' You can download all collected data on the left. This is a private project. Please use with caution!')
 
     # get the dataframe
     df, name2link = get_dataframe()
@@ -356,55 +378,60 @@ def crafter_page():
 
         # get the recipe from the database
         root = cache_crafting_recipe(selection)
-        print(root.url)
 
         # get the reference list
         reference_list = list(root.get_reference_list().keys())
 
         # get the prices for the reference list
         recent_prices = pf.get_most_recent_item_price()
-        recent_prices = collections.defaultdict(lambda: 10000_00_00, recent_prices)
+        recent_prices = collections.defaultdict(lambda: 100_00_00, recent_prices)
 
-        # make a type of layer wise bfs
-        options = []
-        stack = [([root], 0)]
-        min_price = recent_prices[root.id]
-        while stack:
+        # make dfs through the item tree
+        def dfs(node):
+            # we reached a leaf
+            if len(node.children) == 0:
+                assert isinstance(node, rcd.ItemNode), 'Something is off.'
+                return recent_prices[node.id], [(node.id, 1)]
 
-            # go through the current level of items and check for children
-            curr_recipe, depth = stack.pop()
+            # if we are a spell node, we need to sum the items we use
+            if isinstance(node, rcd.SpellNode):
+                # get all the items we need
+                curr_price = [dfs(child) for child in node.children.values()]
 
-            # append the current recipe to the possible recipes
-            opt_dic = collections.defaultdict(int)
-            current_price = 0
-            for item in curr_recipe:
-                opt_dic[item.id] += item.required_amount
-                current_price += recent_prices[item.id]*item.required_amount
-            if current_price <= min_price:
-                min_price = current_price
-                options.append((opt_dic, current_price))
+                # fuse the items together
+                item_dict = collections.defaultdict(int)
+                tmp_price = 0
+                for pprice, item_path in curr_price:
+                    for item, number in item_path:
+                        item_dict[item] += number
+                    tmp_price += pprice
 
-            # check for maximum depth
-            if len(stack) >= 5_000 and depth > 3:
-                continue
+                # get the path again
+                curr_price = (tmp_price, list(item_dict.items()))
 
-            # go through an check whether something is replaceable in the recipe
-            for idx, item in enumerate(curr_recipe):
-                tmp_price = current_price - recent_prices[item.id]*item.required_amount
-                if len(item.children) == 0:
-                    continue
-                for child in item.children.values():
-                    child_list = []
-                    for chh in child.children.values():
-                        child_list.append(chh)
-                        tmp_price += recent_prices[chh.id]
-                    if tmp_price < min_price:
-                        min_price = tmp_price
-                        stack.append((curr_recipe[:idx] + list(child.children.values()) + curr_recipe[idx+1:], depth+1))
+            # if we are an item node, we need to find the cheapest option
+            elif isinstance(node, rcd.ItemNode):
+
+                # check the options to craft the item
+                curr_price = min((dfs(child) for child in node.children.values()), key=lambda x: x[0])
+
+                # check the option to just take the item itself
+                if recent_prices[node.id] < curr_price[0]:
+                    curr_price = (recent_prices[node.id], [(node.id, 1)])
+            else:
+                raise ValueError('Something is off.')
+            return curr_price
+        # get the cheapest combination
+        logger = logging.getLogger('auctionator')
+        __ts = time.perf_counter()
+        cheap_price, cheap_combo = dfs(root)
+        logger.info(f'Searching the graph for item {root.id} (name={items.get(root.id, ("NOT FOUND", ""))[0]}) '
+                    f'took {time.perf_counter()-__ts:0.3f}s.')
 
         # write out all the option
-        for opt, price in options:
-            st.write(pf.price2gold(price) + "-".join(f'{items[ele][0]} ({number})' for ele, number in opt.items()))
+        link_list = [f"{root.base_url}/?item={ele}" for ele, _ in cheap_combo]
+        st.markdown(pf.price2gold(cheap_price) + "-".join(f'[{items[ele][0]}]({linked}) ({number})'
+                                                          for (ele, number), linked in zip(cheap_combo, link_list)))
 
 
 # set the layout to wide
@@ -414,9 +441,7 @@ st.set_page_config(layout="wide", page_title="Autionator")
 init_logging()
 
 # make the page
-st.sidebar.title('Navigation')
-st.sidebar.header('Application')
-__choice = st.sidebar.selectbox('Choose Application', options=['Analyzer', 'Crafter'])
+__choice = side_bar()
 if __choice == 'Analyzer':
     analyzer_page()
 elif __choice == 'Crafter':

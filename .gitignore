@@ -156,3 +156,4 @@ fabric.properties
 
 # ignore the json
 ressources/*.json
+save/*.lua

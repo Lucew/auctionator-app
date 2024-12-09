@@ -69,7 +69,7 @@ class BaseNode:
 class SpellNode(BaseNode):
     query_parameter: str = "spell"
 
-    def __init__(self, spell_id: int, required_amount: int=1, parent: [BaseNode | None] = None):
+    def __init__(self, spell_id: int, required_amount: int = 1, parent: [BaseNode | None] = None):
         super().__init__(spell_id, required_amount, parent)
 
 
