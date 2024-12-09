@@ -1,5 +1,4 @@
 import streamlit as st
-from parseFile import write_data, get_item_prices, db2df, price2gold
 import altair as alt
 import io
 import pandas as pd
@@ -13,6 +12,10 @@ from pandas.api.types import (
 import urllib.parse
 import logging
 import re
+import collections
+
+import requestCraftDB as rcd
+import parseFile as pf
 
 
 def get_remote_ip() -> [str|None]:
@@ -129,7 +132,12 @@ def filter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 # make a cached function to get the data
 @st.cache_data
 def get_dataframe():
-    return db2df(get_item_prices())
+    return pf.db2df(pf.get_item_prices())
+
+
+@st.cache_data
+def cached_get_items():
+    return pf.get_items()
 
 
 # IMPORTANT: Cache the conversion to prevent computation on every rerun
@@ -145,6 +153,40 @@ def convert_df(df, typed: str):
         return buffer
     else:
         raise ValueError('Unrecognized download type!')
+
+
+# cache some of the crafting data
+@st.cache_data(max_entries=20)
+def cache_crafting_recipe(item_id: int):
+    return rcd.create_item_craft_graph(item_id)
+
+
+def item_selector(names: list[str], multiselect: bool = True):
+
+    # check whether we wanna do a multiselect
+
+    # make an item selector with regular expression filter
+    col1, col2 = st.columns(2)
+    regular_matched_items = []
+    if multiselect:
+        with col2:
+            regular_expression = st.text_input('Input (regular) filter expressions for the items.')
+            if regular_expression:
+                try:
+                    regular_expression = re.compile(regular_expression)
+                    regular_matched_items = list(filter(lambda x: bool(regular_expression.findall(x)), names))
+                except re.error as e:
+                    st.warning(f'Regex Pattern was not valid: {str(e)}', icon="⚠️")
+        with col1:
+
+            # make the multiselect and keep the session state
+            default_vals = st.session_state.get("multi_select_items", names[:1])
+            default_vals.extend(regular_matched_items)
+            selection = set(st.multiselect('Choose the items of interest', options=names, default=default_vals,
+                                           key="multi_select_items"), )
+    else:
+        selection = st.selectbox('Choose the items of interest', options=names)
+    return selection
 
 
 def analyzer_page():
@@ -172,7 +214,7 @@ def analyzer_page():
         stringio = uploaded_file.getvalue().decode("utf-8")
 
         # parse the string
-        success_val, succes_str = write_data(stringio)
+        success_val, succes_str = pf.write_data(stringio)
         if success_val:
             st.sidebar.write(succes_str)
         else:
@@ -188,24 +230,8 @@ def analyzer_page():
     df, name2link = get_dataframe()
     names = list(df['Name'].unique())
 
-    # make an item selector with regular expression filter
-    col1, col2 = st.columns(2)
-    regular_matched_items = []
-    with col2:
-        regular_expression = st.text_input('Input (regular) filter expressions for the items.')
-        if regular_expression:
-            try:
-                regular_expression = re.compile(regular_expression)
-                regular_matched_items = list(filter(lambda x: bool(regular_expression.findall(x)), names))
-            except re.error as e:
-                st.warning(f'Regex Pattern was not valid: {str(e)}', icon="⚠️")
-    with col1:
-
-        # make the multiselect and keep the session state
-        default_vals = st.session_state.get("multi_select_items", names[:1])
-        default_vals.extend(regular_matched_items)
-        selection = set(st.multiselect('Choose the items of interest', options=names, default=default_vals,
-                                       key="multi_select_items"),)
+    # get the selection
+    selection = item_selector(names)
 
     # create the selection within the dataframe
     selected_df = df
@@ -243,7 +269,7 @@ def analyzer_page():
                  "_index": st.column_config.LinkColumn('Name', display_text=r"[?&]name=([^&#]+)$")}
     style_format = dict()
     for name in grouped_df.columns[1:-1]:
-        style_format[name] = price2gold
+        style_format[name] = pf.price2gold
     style_format['count'] = int
 
     # make a checkbox whether to apply selection
@@ -307,6 +333,80 @@ def analyzer_page():
             logger.info(f'Download XLSX-File {"(selection)" if download_type == "Selection" else ""}.')
 
 
+def crafter_page():
+
+    # make a title
+    st.title('Crafter')
+
+    # get all the items we have
+    items = cached_get_items()
+
+    # get the item selection
+    selection = st.number_input('Input the id of the item you want to craft (e.g., 49906)', 0, max(items.keys()), 49906)
+
+    # Write the item
+    if selection not in items:
+        st.warning(f'Item with id {selection} not found.', icon="⚠️")
+        return
+    # write the name of the item
+    st.header(f'{" ".join(ele.capitalize() for ele in items[selection][0].split())} - {selection}')
+
+    # request the rising gods database
+    with st.spinner('Wait for it...'):
+
+        # get the recipe from the database
+        root = cache_crafting_recipe(selection)
+        print(root.url)
+
+        # get the reference list
+        reference_list = list(root.get_reference_list().keys())
+
+        # get the prices for the reference list
+        recent_prices = pf.get_most_recent_item_price()
+        recent_prices = collections.defaultdict(lambda: 10000_00_00, recent_prices)
+
+        # make a type of layer wise bfs
+        options = []
+        stack = [([root], 0)]
+        min_price = recent_prices[root.id]
+        while stack:
+
+            # go through the current level of items and check for children
+            curr_recipe, depth = stack.pop()
+
+            # append the current recipe to the possible recipes
+            opt_dic = collections.defaultdict(int)
+            current_price = 0
+            for item in curr_recipe:
+                opt_dic[item.id] += item.required_amount
+                current_price += recent_prices[item.id]*item.required_amount
+            if current_price <= min_price:
+                min_price = current_price
+                options.append((opt_dic, current_price))
+
+            # check for maximum depth
+            if len(stack) >= 5_000 and depth > 3:
+                continue
+
+            # go through an check whether something is replaceable in the recipe
+            for idx, item in enumerate(curr_recipe):
+                tmp_price = current_price - recent_prices[item.id]*item.required_amount
+                if len(item.children) == 0:
+                    continue
+                for child in item.children.values():
+                    child_list = []
+                    for chh in child.children.values():
+                        child_list.append(chh)
+                        tmp_price += recent_prices[chh.id]
+                    if tmp_price < min_price:
+                        min_price = tmp_price
+                        stack.append((curr_recipe[:idx] + list(child.children.values()) + curr_recipe[idx+1:], depth+1))
+
+        # write out all the option
+        for opt, price in options:
+            st.write(pf.price2gold(price) + "-".join(f'{items[ele][0]} ({number})' for ele, number in opt.items()))
+
+
 # set the layout to wide
 st.set_page_config(layout="wide", page_title="Autionator")
 
@@ -320,4 +420,4 @@ __choice = st.sidebar.selectbox('Choose Application', options=['Analyzer', 'Craf
 if __choice == 'Analyzer':
     analyzer_page()
 elif __choice == 'Crafter':
-    st.write('To come.')
+    crafter_page()
