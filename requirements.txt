@@ -8,6 +8,7 @@ pandas
 xlsxwriter
 beautifulsoup4
 requests
+streamlit-flow-component
 
 # for transfering the items database
 mysql-to-sqlite3

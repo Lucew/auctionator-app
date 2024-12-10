@@ -182,6 +182,8 @@ def get_most_recent_item_price():
     session = sqlalchemy.orm.Session(db)
     Base.metadata.create_all(db)
     recent_price = session.execute(sqlalchemy.text('SELECT i.item_id, p.price FROM prices p JOIN items i ON p.id == i.item_id WHERE p.unix_timestamp == (SELECT MIN(unix_timestamp) FROM prices p2 WHERE p2.id == p.id)')).all()
+    logger = logging.getLogger('auctionator')
+    logger.info(f'Querying the DB for the most recent prices took {time.perf_counter() - __ts: 0.2f}s')
     return dict(recent_price)
 
 
@@ -288,6 +290,16 @@ def db2df(history_dict: dict[tuple[int, str]: list[tuple[int, float]]]):
 
 def name2dblink(item_id: int, name: str):
     return f'https://db.rising-gods.de/?item={item_id}&name={urllib.parse.quote(name)}'
+
+
+def update_db_name_de(item_id: int, name: str):
+    __ts = time.perf_counter()
+    db = sqlalchemy.create_engine('sqlite:///auctionator.db')
+    session = sqlalchemy.orm.Session(db)
+    Base.metadata.create_all(db)
+    session.execute(sqlalchemy.text(f'UPDATE items SET name_de = "{name}" WHERE item_id = {item_id}'))
+    logger = logging.getLogger('auctionator')
+    logger.info(f'Updating the german name for item {item_id} took {time.perf_counter() - __ts: 0.2f}s.')
 
 
 def test():

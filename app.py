@@ -20,6 +20,7 @@ import os
 
 import requestCraftDB as rcd
 import parseFile as pf
+import createCraftFlow as ccf
 
 
 def get_remote_ip() -> [str|None]:
@@ -165,6 +166,18 @@ def cache_crafting_recipe(item_id: int):
     return rcd.create_item_craft_graph(item_id)
 
 
+# cache some of the item names
+@st.cache_data(max_entries=20)
+def cache_crafting_recipe(item_id: int):
+    return rcd.create_item_craft_graph(item_id)
+
+
+# cache some of the item database requests
+@st.cache_data(max_entries=20, hash_funcs={rcd.ItemNode: rcd.BaseNode.__hash__})
+def cache_request_name(item: rcd.ItemNode):
+    return rcd.request_name(item)
+
+
 def item_selector(names: list[str], multiselect: bool = True):
 
     # check whether we wanna do a multiselect
@@ -199,7 +212,7 @@ def side_bar():
 
     st.sidebar.title('Navigation')
     st.sidebar.header('Application')
-    choice = st.sidebar.selectbox('Choose Application', options=['Analyzer', 'Crafter'])
+    choice = st.sidebar.selectbox('Choose Application', options=['Analyzer', 'Crafter', 'Extender'])
 
     # create a file upload
     st.sidebar.header('File Upload')
@@ -356,6 +369,7 @@ def analyzer_page():
 
 
 def crafter_page():
+    logger = logging.getLogger('auctionator')
 
     # make a title
     st.title('Crafter')
@@ -373,10 +387,13 @@ def crafter_page():
     # write the name of the item
     st.header(f'{" ".join(ele.capitalize() for ele in items[selection][0].split())} - {selection}')
 
+    # a checkbox to show a graph
+    show_craft_graph = st.checkbox('Show Craft Graph (might consume large memory in your browser).', False)
+
     # request the rising gods database
     with st.spinner('Wait for it...'):
 
-        # get the recipe from the database
+        # get the recipe from the database (4096 is a problem)
         root = cache_crafting_recipe(selection)
 
         # get the reference list
@@ -384,7 +401,11 @@ def crafter_page():
 
         # get the prices for the reference list
         recent_prices = pf.get_most_recent_item_price()
-        recent_prices = collections.defaultdict(lambda: 100_00_00, recent_prices)
+        recent_prices = collections.defaultdict(lambda: float('inf'), recent_prices)
+
+        # make the craft flow
+        if show_craft_graph:
+            ccf.create_flow(root)
 
         # make dfs through the item tree
         def dfs(node):
@@ -422,16 +443,56 @@ def crafter_page():
                 raise ValueError('Something is off.')
             return curr_price
         # get the cheapest combination
-        logger = logging.getLogger('auctionator')
         __ts = time.perf_counter()
         cheap_price, cheap_combo = dfs(root)
         logger.info(f'Searching the graph for item {root.id} (name={items.get(root.id, ("NOT FOUND", ""))[0]}) '
-                    f'took {time.perf_counter()-__ts:0.3f}s.')
+                    f'took {time.perf_counter()-__ts:0.4f}s.')
 
         # write out all the option
         link_list = [f"{root.base_url}/?item={ele}" for ele, _ in cheap_combo]
-        st.markdown(pf.price2gold(cheap_price) + "-".join(f'[{items[ele][0]}]({linked}) ({number})'
-                                                          for (ele, number), linked in zip(cheap_combo, link_list)))
+        if cheap_price == float('inf'):
+            st.warning(f'We did not have a price for any valid path for {root.id}', icon="⚠️")
+        else:
+            st.write('Best crafting path:')
+            st.markdown(pf.price2gold(cheap_price) + "-".join(f'[{items[ele][0]}]({linked}) ({number})'
+                                                              for (ele, number), linked in zip(cheap_combo, link_list)))
+
+
+
+def extender_page():
+    logger = logging.getLogger('auctionator')
+
+    # get all the items we have
+    items = cached_get_items()
+
+    # make a title
+    st.title('Extender')
+    st.write('This allows to extend item names and prices.')
+
+    # enter some item id
+    curr_item = st.number_input('Input the id of the item you want to change (e.g., 49906)', 0, max(items.keys()), 49906)
+
+    # search the item in our database
+    if curr_item not in items:
+        st.warning(f'item not in our database: {curr_item}', icon="⚠️")
+        return
+
+    # request name from the db
+    item = rcd.ItemNode(curr_item)
+    st.markdown(f'Found: [{items[curr_item][0]}]({item.url}) (german name: [{items[curr_item][1]}]({item.url}))')
+    st.divider()
+    # get the name from the database
+    with st.spinner('Requesting Name...'):
+        item_name = cache_request_name(item)
+
+    # update the name
+    if item_name is not None:
+        st.markdown(f'We found the following german name for this item id={item.id}: [{item_name}]({item.url}).')
+        st.write('Shall we update the german name in our database?')
+        updater = st.button('Update')
+        if updater:
+            pf.update_db_name_de(item.id, item_name)
+            st.write('✅')
 
 
 # set the layout to wide
@@ -446,3 +507,5 @@ if __choice == 'Analyzer':
     analyzer_page()
 elif __choice == 'Crafter':
     crafter_page()
+elif __choice == 'Extender':
+    extender_page()

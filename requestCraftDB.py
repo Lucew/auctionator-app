@@ -5,7 +5,10 @@ import requests
 import re
 from bs4 import BeautifulSoup
 import sys
-
+import logging
+import time
+import collections
+# TODO: Integrate spell database, spell updater and with that spell names
 
 class BaseNode:
     base_url: str = "https://db.rising-gods.de"
@@ -65,6 +68,9 @@ class BaseNode:
         children[-1].print_subtree(indent_width, f'{indent}{" " * (indent_width+1)}', buffer=buffer)
         return buffer
 
+    def __hash__(self):
+        return self.id
+
 
 class SpellNode(BaseNode):
     query_parameter: str = "spell"
@@ -80,17 +86,27 @@ class ItemNode(BaseNode):
         super().__init__(item_id, required_amount, parent)
 
 
-def create_item_craft_graph(item_id: int):
+def create_item_craft_graph(item_id: int, items: dict[int: tuple[str, str]] = None):
     # ressources id: 49906
+
+    # get the logger
+    logger = logging.getLogger('auctionator')
+    __ts = time.perf_counter()
+
+    # make a defaultdict from the names
+    if items is None:
+        items = collections.defaultdict(lambda: ("", ""))
 
     # create the BaseNode for initializing the graph
     root = ItemNode(item_id=item_id, required_amount=1)
 
     # make a request
-    recipe_request = requests.get(root.url)
+    recipe_request = requests.get(f'{root.url}#created-by')
+    request_count = 1
 
     # get the spells that belong to the item
-    line = [ele for ele in recipe_request.text.split('\n') if ele.strip().startswith('var _ = g_spells;')]
+    line_identifier = 'new Listview({"template":"spell","id":"created-by"'
+    line = [ele for ele in recipe_request.text.split('\n') if ele.strip().startswith(line_identifier)]
 
     # check whether we can craft the item
     if not line:
@@ -99,7 +115,7 @@ def create_item_craft_graph(item_id: int):
     # check that we found one line
     assert len(line) == 1, 'Line is not long enough.'
     line = line[0]
-    spells = [ele[2:-3] for ele in re.findall(r"_\[\d+\]=\{", line)]
+    spells = [ele[5:-1] for ele in re.findall(r'"id":\d+,', line)]
 
     # go through the spells and check whether we find spells that create the item
     # if that is the case we will extract the whole crafting tree, which is shown conveniently by the RG database
@@ -108,6 +124,7 @@ def create_item_craft_graph(item_id: int):
 
         # get the spell pages and look for an enum on what we need
         page_list = requests.get(f"{root.base_url}/?spell={spell}").text
+        request_count += 1
 
         # initialize the page parser
         soup = BeautifulSoup(page_list, "html.parser")
@@ -139,7 +156,8 @@ def create_item_craft_graph(item_id: int):
             element_id = int(element_id)
 
             # get the number of elements
-            number_elements = int(re.findall(r"\d+", table_row.text)[0])
+            number_elements = re.findall(r"\d+", table_row.text)
+            number_elements = 1 if not number_elements else int(number_elements[0])
 
             # save the item live
             items_needed.append((level, element_type, element_id, number_elements))
@@ -168,7 +186,46 @@ def create_item_craft_graph(item_id: int):
 
             # add to parent stack
             parent_stack.append((curr_node, level))
+    logger.info(f'Request for craft table took {time.perf_counter()-__ts:0.3f}s and we made {request_count} requests.')
     return root
+
+
+def request_name(item: ItemNode):
+
+    # get the logger
+    logger = logging.getLogger('auctionator')
+    __ts = time.perf_counter()
+
+    # make a header for a german response
+    custom_headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
+                      'Chrome/131.0.0.0 Safari/537.36',
+        'accept-language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7,it;q=0.6'
+    }
+
+    # request the html from the database
+    page = requests.get(item.url, headers=custom_headers).text
+
+    # initialize the page parser
+    soup = BeautifulSoup(page, "html.parser")
+
+    # get all header of level one and keep the one that contains a star
+    try:
+        titles = soup.find_all('title')
+        assert len(titles) == 1, f'Page Contained more than one or no title for {item.url}: {titles}'
+        title = titles.pop()
+
+        # check that the page is german
+        end_str = ' - Gegenstand - Rising Gods - WotLK Database'
+        assert title.text.endswith(end_str), f'Title weird for {item.url}: {title}.'
+        item_name = title.text[:-len(end_str)]
+
+        # measure the time
+        logger.info(f'Request for item name took {time.perf_counter() - __ts:0.3f}s.')
+        return item_name
+    except AssertionError as e:
+        logger.error(f'Request_Name error! {str(e)}')
+        return None
 
 
 if __name__ == '__main__':
