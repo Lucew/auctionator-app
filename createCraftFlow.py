@@ -1,15 +1,26 @@
+import collections
 from streamlit_flow import streamlit_flow
 from streamlit_flow.elements import StreamlitFlowNode, StreamlitFlowEdge
 from streamlit_flow.state import StreamlitFlowState
 from streamlit_flow.layouts import TreeLayout
+
 import requestCraftDB as rcd
+import parseFile as pf
 
 
-def create_flow(root: rcd.ItemNode):
+def create_content_str(item: rcd.BaseNode, recent_prices: collections.defaultdict[int: [int|float]]):
+    price = recent_prices[item.id]
+    content_str = f'{"Item" if isinstance(item, rcd.ItemNode) else "Spell"} ' \
+                  f'{item.name} Id={item.id} ({item.required_amount})\n' \
+                  f'Price: {"?" if price == float("inf") else pf.price2gold(price*item.required_amount)}'
+    return content_str
+
+
+def create_flow(root: rcd.ItemNode, recent_prices: collections.defaultdict[int: [int|float]]):
 
     # traverse the graph using layer wise bfs and create the nodes and edges
     flow_node = StreamlitFlowNode(id='0.0', pos=(0, 0),
-                                  data={'content': f'Item {root.id} ({root.required_amount})'},
+                                  data={'content': create_content_str(root, recent_prices)},
                                   node_type='input', source_position='right', target_position='left')
     layer = [(root, flow_node)]
     nodes = [flow_node]
@@ -24,7 +35,7 @@ def create_flow(root: rcd.ItemNode):
 
                 # create a new node
                 flow_node = StreamlitFlowNode(id=f'{level+1}.{len(children)}', pos=(level*200, 50*len(children)),
-                                              data={'content': f'{"Item" if isinstance(child, rcd.ItemNode) else "Spell"} {child.id} ({child.required_amount})'},
+                                              data={'content': create_content_str(child, recent_prices)},
                                               node_type='default', source_position='right', target_position='left')
 
                 # create a new edge

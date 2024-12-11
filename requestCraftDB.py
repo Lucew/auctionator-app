@@ -10,6 +10,7 @@ import time
 import collections
 # TODO: Integrate spell database, spell updater and with that spell names
 
+
 class BaseNode:
     base_url: str = "https://db.rising-gods.de"
     query_parameter: str
@@ -37,18 +38,47 @@ class BaseNode:
 
         # make stack dfs and create the reference list
         stack = [root]
-        reference_list = {root.id: root}
+        reference_list = collections.defaultdict(list)
+        reference_list[root.id].append(root)
         while stack:
 
             # get the children
             curr = stack.pop()
 
             # save all the children
-            reference_list.update((child.id, child) for child in curr.children.values())
+            for child in curr.children.values():
+                reference_list[child.id].append(child)
 
             # update the stack
             stack.extend(curr.children.values())
         return reference_list
+
+    def set_names(self, spell_dict: dict[int: str], item_dict: dict[int: str], return_when_name: bool = False):
+
+        # check whether the root has a name
+        if return_when_name and self.name:
+            return
+
+        # go up to the root node of the current graph
+        curr = self
+        while curr.parent:
+            curr = curr.parent
+        root = curr
+
+        # make stack dfs and create the reference list
+        stack = [root]
+        while stack:
+
+            # get the children
+            curr = stack.pop()
+
+            # set the name
+            name_dict = spell_dict if isinstance(curr, SpellNode) else item_dict
+            if curr.id in name_dict:
+                curr.name = (name_dict[curr.id][1] if name_dict[curr.id][1] else name_dict[curr.id][0])
+
+            # update the stack
+            stack.extend(curr.children.values())
 
     def __str__(self):
         return f'{self.__class__} id={self.id} number={self.required_amount} {self.name if self.name else ""}'
@@ -69,7 +99,7 @@ class BaseNode:
         return buffer
 
     def __hash__(self):
-        return self.id
+        return self.url
 
 
 class SpellNode(BaseNode):
@@ -86,16 +116,12 @@ class ItemNode(BaseNode):
         super().__init__(item_id, required_amount, parent)
 
 
-def create_item_craft_graph(item_id: int, items: dict[int: tuple[str, str]] = None):
+def create_item_craft_graph(item_id: int):
     # ressources id: 49906
 
     # get the logger
     logger = logging.getLogger('auctionator')
     __ts = time.perf_counter()
-
-    # make a defaultdict from the names
-    if items is None:
-        items = collections.defaultdict(lambda: ("", ""))
 
     # create the BaseNode for initializing the graph
     root = ItemNode(item_id=item_id, required_amount=1)
@@ -115,7 +141,7 @@ def create_item_craft_graph(item_id: int, items: dict[int: tuple[str, str]] = No
     # check that we found one line
     assert len(line) == 1, 'Line is not long enough.'
     line = line[0]
-    spells = [ele[5:-1] for ele in re.findall(r'"id":\d+,', line)]
+    spells = [int(ele[5:-1]) for ele in re.findall(r'"id":\d+,', line)]
 
     # go through the spells and check whether we find spells that create the item
     # if that is the case we will extract the whole crafting tree, which is shown conveniently by the RG database
@@ -190,7 +216,7 @@ def create_item_craft_graph(item_id: int, items: dict[int: tuple[str, str]] = No
     return root
 
 
-def request_name(item: ItemNode):
+def request_name(item: BaseNode, language: str = 'de'):
 
     # get the logger
     logger = logging.getLogger('auctionator')
@@ -200,7 +226,7 @@ def request_name(item: ItemNode):
     custom_headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
                       'Chrome/131.0.0.0 Safari/537.36',
-        'accept-language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7,it;q=0.6'
+        'accept-language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7,it;q=0.6' if language == 'de' else 'en-US'
     }
 
     # request the html from the database
@@ -216,12 +242,16 @@ def request_name(item: ItemNode):
         title = titles.pop()
 
         # check that the page is german
-        end_str = ' - Gegenstand - Rising Gods - WotLK Database'
-        assert title.text.endswith(end_str), f'Title weird for {item.url}: {title}.'
+        if language == 'de':
+            end_str = f' - {"Gegenstand" if isinstance(item, ItemNode) else "Zauber"} - Rising Gods - WotLK Database'
+            assert title.text.endswith(end_str), f'Title weird for {item.url}: {title}.'
+        else:
+            end_str = f' - {"Item" if isinstance(item, ItemNode) else "Spell"} - Rising Gods - WotLK Database'
+            assert title.text.endswith(end_str), f'Title weird for {item.url}: {title}.'
         item_name = title.text[:-len(end_str)]
 
         # measure the time
-        logger.info(f'Request for item name took {time.perf_counter() - __ts:0.3f}s.')
+        logger.info(f'Request for item name (language {language}) took {time.perf_counter() - __ts:0.3f}s.')
         return item_name
     except AssertionError as e:
         logger.error(f'Request_Name error! {str(e)}')

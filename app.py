@@ -134,7 +134,7 @@ def filter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# make a cached function to get the data
+# make a cached function to get the data stuff
 @st.cache_data
 def get_dataframe():
     return pf.db2df(pf.get_item_prices())
@@ -143,6 +143,11 @@ def get_dataframe():
 @st.cache_data
 def cached_get_items():
     return pf.get_items()
+
+
+@st.cache_resource
+def cached_get_spells():
+    return pf.get_spells()
 
 
 # IMPORTANT: Cache the conversion to prevent computation on every rerun
@@ -166,16 +171,10 @@ def cache_crafting_recipe(item_id: int):
     return rcd.create_item_craft_graph(item_id)
 
 
-# cache some of the item names
-@st.cache_data(max_entries=20)
-def cache_crafting_recipe(item_id: int):
-    return rcd.create_item_craft_graph(item_id)
-
-
 # cache some of the item database requests
-@st.cache_data(max_entries=20, hash_funcs={rcd.ItemNode: rcd.BaseNode.__hash__})
-def cache_request_name(item: rcd.ItemNode):
-    return rcd.request_name(item)
+@st.cache_data(max_entries=20, hash_funcs={rcd.ItemNode: rcd.BaseNode.__hash__, rcd.SpellNode: rcd.BaseNode.__hash__})
+def cache_request_name(item: rcd.BaseNode, language: str):
+    return rcd.request_name(item, language)
 
 
 def item_selector(names: list[str], multiselect: bool = True):
@@ -247,6 +246,15 @@ def side_bar():
             # https://stackoverflow.com/a/77676594
             get_dataframe.clear()
             logger.info('File is parsed and cache invalidated.')
+
+    # find items by name
+    items = cached_get_items()
+    item2id = {item_name: item_id for item_id, names in items.items() for item_name in names}
+    st.sidebar.header('Item Finder')
+    item_name = st.sidebar.multiselect('Item ID finder', list(item2id.keys()), max_selections=1)
+    if item_name:
+        item_name = item_name[0]
+        st.sidebar.write(f'{item_name}: {item2id[item_name]}')
     return choice
 
 
@@ -376,6 +384,7 @@ def crafter_page():
 
     # get all the items we have
     items = cached_get_items()
+    spells = cached_get_spells()
 
     # get the item selection
     selection = st.number_input('Input the id of the item you want to craft (e.g., 49906)', 0, max(items.keys()), 49906)
@@ -386,18 +395,24 @@ def crafter_page():
         return
     # write the name of the item
     st.header(f'{" ".join(ele.capitalize() for ele in items[selection][0].split())} - {selection}')
+    item = rcd.ItemNode(selection)
+    st.markdown(f"[{items[selection][0]}]({item.url})")
 
     # a checkbox to show a graph
     show_craft_graph = st.checkbox('Show Craft Graph (might consume large memory in your browser).', False)
 
-    # request the rising gods database
+    # request the rising gods database for the crafting graph
+    reference_list = None
     with st.spinner('Wait for it...'):
 
         # get the recipe from the database (4096 is a problem)
         root = cache_crafting_recipe(selection)
 
         # get the reference list
-        reference_list = list(root.get_reference_list().keys())
+        reference_list = root.get_reference_list()
+
+        # set the names of the spells
+        root.set_names(spells, items, return_when_name=True)
 
         # get the prices for the reference list
         recent_prices = pf.get_most_recent_item_price()
@@ -405,7 +420,7 @@ def crafter_page():
 
         # make the craft flow
         if show_craft_graph:
-            ccf.create_flow(root)
+            ccf.create_flow(root, recent_prices)
 
         # make dfs through the item tree
         def dfs(node):
@@ -456,21 +471,32 @@ def crafter_page():
             st.write('Best crafting path:')
             st.markdown(pf.price2gold(cheap_price) + "-".join(f'[{items[ele][0]}]({linked}) ({number})'
                                                               for (ele, number), linked in zip(cheap_combo, link_list)))
-
+    return reference_list
 
 
 def extender_page():
-    logger = logging.getLogger('auctionator')
-
-    # get all the items we have
-    items = cached_get_items()
 
     # make a title
     st.title('Extender')
-    st.write('This allows to extend item names and prices.')
+    st.write('This allows to extend item names and spell names.')
+
+    # select whether to update item or spell
+    update_type = st.selectbox('What do you want to update?', ['Spell names', 'Item names'])
+
+    # decide what to do
+    if update_type == 'Item names':
+        extend_item()
+    elif update_type == 'Spell names':
+        extend_spell()
+
+
+def extend_item():
+    # get all the items we have
+    items = cached_get_items()
 
     # enter some item id
-    curr_item = st.number_input('Input the id of the item you want to change (e.g., 49906)', 0, max(items.keys()), 49906)
+    curr_item = st.number_input('Input the id of the item you want to change (e.g., 49906)', 0, max(items.keys()),
+                                49906)
 
     # search the item in our database
     if curr_item not in items:
@@ -483,16 +509,86 @@ def extender_page():
     st.divider()
     # get the name from the database
     with st.spinner('Requesting Name...'):
-        item_name = cache_request_name(item)
+        item_name = cache_request_name(item, language='de')
 
     # update the name
     if item_name is not None:
-        st.markdown(f'We found the following german name for this item id={item.id}: [{item_name}]({item.url}).')
+        st.markdown(f'We found the german name for this item id={item.id}: [{item_name}]({item.url}).')
         st.write('Shall we update the german name in our database?')
         updater = st.button('Update')
         if updater:
-            pf.update_db_name_de(item.id, item_name)
+            # update the database
+            pf.update_db_item_name_de(item.id, item_name)
             st.write('✅')
+
+            # invalidate the items cache
+            cached_get_items.clear()
+
+
+def extend_spell():
+
+    # enter some spell id
+    curr_spell = st.number_input('Input the id of the item you want to change (e.g., 49906)', 0, 1_000_000, 70566)
+
+    # get all the items we have
+    spells = cached_get_spells()
+
+    # create the corresponding item
+    spell = rcd.SpellNode(curr_spell)
+
+    # search the item in our database
+    if curr_spell not in spells:
+        st.warning(f'Spell not in our database: {curr_spell}', icon="⚠️")
+    else:
+        st.markdown(f'Found: [{spells[curr_spell][0]}]({spell.url}) '
+                    f'(german name: [{spells[curr_spell][1]}]({spell.url}))')
+    st.divider()
+
+    # get the name from the database
+    with st.spinner('Requesting Name...'):
+        spell_name = cache_request_name(spell, language='de')
+        spell_name_en = cache_request_name(spell, language='en')
+
+    # update the name
+    if spell_name is not None:
+        st.markdown(f'We found the german name for this spell id={spell.id}: [{spell_name}]({spell.url}).')
+        st.markdown(f'We found the english name for this spell id={spell.id}: [{spell_name_en}]({spell.url}).')
+        st.write('Shall we update the name in our database?')
+        updater = st.button('Update')
+        if updater:
+
+            # update the database
+            pf.insert_db_spell_name(spell.id, spell_name, spell_name_en)
+            st.write('✅')
+
+            # invalidate the spells cache
+            cached_get_spells.clear()
+    else:
+        st.markdown(f'We did not find spell: [{spell.id}]({spell.url}).')
+
+
+def update_spells_from_reference_list(reference_list: dict[int: list[rcd.BaseNode]], sleep_time: float = 0.4):
+
+    # check for unknown spells
+    spells = cached_get_spells()
+    unknown_spells = [rcd.SpellNode(spell_id) for spell_id, node_list in reference_list.items()
+                      if node_list and isinstance(node_list[0], rcd.SpellNode) and spell_id not in spells]
+
+    # create a button to update all spells
+    st.write(f'Updating will take ~{int(len(unknown_spells)*(sleep_time+0.1)+1)}s')
+    update_all_spells = st.button('Update Spells.')
+    if not update_all_spells:
+        return
+    with st.spinner('Updating spell names...'):
+        for spell in unknown_spells:
+            spell_name = cache_request_name(spell, language='de')
+            spell_name_en = cache_request_name(spell, language='en')
+            if spell_name and spell_name_en:
+                pf.insert_db_spell_name(spell.id, spell_name, spell_name_en)
+            time.sleep(sleep_time)
+
+    # invalidate the cache
+    cached_get_spells.clear()
 
 
 # set the layout to wide
@@ -506,6 +602,7 @@ __choice = side_bar()
 if __choice == 'Analyzer':
     analyzer_page()
 elif __choice == 'Crafter':
-    crafter_page()
+    __ref_list = crafter_page()
+    update_spells_from_reference_list(__ref_list)
 elif __choice == 'Extender':
     extender_page()

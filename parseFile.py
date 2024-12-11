@@ -1,16 +1,16 @@
-import numpy as np
 from slpp import slpp as lua
 import os
 import re
 import time
 import datetime
 import sqlalchemy
-from createDatabase import Item, Price, Base
 import collections
 import pygsheets
 import pandas as pd
 import urllib.parse
 import logging
+
+import createDatabase as cdb
 
 
 def parse_data(content: str = None):
@@ -101,7 +101,7 @@ def write_to_database(hist: dict[tuple[int|str, str]: tuple[int, int]]):
     logger = logging.getLogger('auctionator')
     db = sqlalchemy.create_engine('sqlite:///auctionator.db')
     session = sqlalchemy.orm.Session(db)
-    Base.metadata.create_all(db)
+    cdb.Base.metadata.create_all(db)
 
     # go through the data and create items if necessary, otherwise check that id is unique
     for item, value_dict in hist.items():
@@ -110,7 +110,7 @@ def write_to_database(hist: dict[tuple[int|str, str]: tuple[int, int]]):
         curr_id = int(value_dict['is'][0])
 
         # check whether we already have the id or the name
-        check_query = session.query(Item).filter_by(item_id=curr_id).all()
+        check_query = session.query(cdb.Item).filter_by(item_id=curr_id).all()
         if check_query:
             try:
                 assert check_query[0].item_id == curr_id, f'Something with {item}:{curr_id} is off.'
@@ -139,9 +139,9 @@ def write_to_database(hist: dict[tuple[int|str, str]: tuple[int, int]]):
                 continue
 
             # check whether this item with this date is already there
-            check_query = session.query(Price).filter_by(id=curr_id, unix_timestamp=typed[0]).one_or_none()
+            check_query = session.query(cdb.Price).filter_by(id=curr_id, unix_timestamp=typed[0]).one_or_none()
             if check_query is None:
-                session.add(Price(id=curr_id, unix_timestamp=typed[0], price=stacks[0], stacks=int(stacks[1])))
+                session.add(cdb.Price(id=curr_id, unix_timestamp=typed[0], price=stacks[0], stacks=int(stacks[1])))
     session.commit()
     logger.info(f'Writing to DB took {time.perf_counter() - __ts: 0.2f}s')
     return True, 'Success!'
@@ -151,8 +151,8 @@ def get_item_prices():
     __ts = time.perf_counter()
     db = sqlalchemy.create_engine('sqlite:///auctionator.db')
     session = sqlalchemy.orm.Session(db)
-    Base.metadata.create_all(db)
-    grouped_prices = session.query(Price, Item).filter(Price.id == Item.item_id).all()
+    cdb.Base.metadata.create_all(db)
+    grouped_prices = session.query(cdb.Price, cdb.Item).filter(cdb.Price.id == cdb.Item.item_id).all()
     prices_dict = collections.defaultdict(list)
     for group in grouped_prices:
         prices_dict[(group[1].item_id, group[1].name_de if group[1].name_de else group[1].name)].append(
@@ -168,19 +168,41 @@ def get_items():
     __ts = time.perf_counter()
     db = sqlalchemy.create_engine('sqlite:///auctionator.db')
     session = sqlalchemy.orm.Session(db)
-    Base.metadata.create_all(db)
-    result = session.execute(sqlalchemy.select(Item.item_id, Item.name, Item.name_de)).all()
+    cdb.Base.metadata.create_all(db)
+
+    # query all items
+    result = session.execute(sqlalchemy.select(cdb.Item.item_id, cdb.Item.name, cdb.Item.name_de)).all()
     item_dict = {rs.item_id: (rs.name, rs.name_de) for rs in result}
+
+    # logg the time it took
     logger = logging.getLogger('auctionator')
     logger.info(f'Querying the DB for all items took {time.perf_counter() - __ts: 0.2f}s')
     return item_dict
+
+
+def get_spells():
+    __ts = time.perf_counter()
+    db = sqlalchemy.create_engine('sqlite:///auctionator.db')
+    session = sqlalchemy.orm.Session(db)
+    cdb.Base.metadata.create_all(db)
+
+    # search through spell names
+    result = session.query(cdb.SpellNames).all()
+
+    # collect the results
+    spell_dict = {spell.id: (spell.name_en, spell.name_de) for spell in result}
+
+    # logg the time it took
+    logger = logging.getLogger('auctionator')
+    logger.info(f'Querying the DB for all spells took {time.perf_counter() - __ts: 0.2f}s')
+    return spell_dict
 
 
 def get_most_recent_item_price():
     __ts = time.perf_counter()
     db = sqlalchemy.create_engine('sqlite:///auctionator.db')
     session = sqlalchemy.orm.Session(db)
-    Base.metadata.create_all(db)
+    cdb.Base.metadata.create_all(db)
     recent_price = session.execute(sqlalchemy.text('SELECT i.item_id, p.price FROM prices p JOIN items i ON p.id == i.item_id WHERE p.unix_timestamp == (SELECT MIN(unix_timestamp) FROM prices p2 WHERE p2.id == p.id)')).all()
     logger = logging.getLogger('auctionator')
     logger.info(f'Querying the DB for the most recent prices took {time.perf_counter() - __ts: 0.2f}s')
@@ -292,14 +314,39 @@ def name2dblink(item_id: int, name: str):
     return f'https://db.rising-gods.de/?item={item_id}&name={urllib.parse.quote(name)}'
 
 
-def update_db_name_de(item_id: int, name: str):
+def update_db_item_name_de(item_id: int, name: str):
     __ts = time.perf_counter()
+
+    # get the session to the database
     db = sqlalchemy.create_engine('sqlite:///auctionator.db')
     session = sqlalchemy.orm.Session(db)
-    Base.metadata.create_all(db)
+    cdb.Base.metadata.create_all(db)
+
+    # update the item
     session.execute(sqlalchemy.text(f'UPDATE items SET name_de = "{name}" WHERE item_id = {item_id}'))
+    session.commit()
+
+    # logg the time and execution
     logger = logging.getLogger('auctionator')
     logger.info(f'Updating the german name for item {item_id} took {time.perf_counter() - __ts: 0.2f}s.')
+
+
+def insert_db_spell_name(spell_id: int, name_de: str, name_en: str):
+    __ts = time.perf_counter()
+
+    # get the session to the database
+    db = sqlalchemy.create_engine('sqlite:///auctionator.db')
+    session = sqlalchemy.orm.Session(db)
+    cdb.Base.metadata.create_all(db)
+
+    # update the item
+    query = f'INSERT INTO spell_names VALUES ({spell_id}, "{name_de}", "{name_en}", "");'
+    session.execute(sqlalchemy.text(query))
+    session.commit()
+
+    # logg the time and execution
+    logger = logging.getLogger('auctionator')
+    logger.info(f'Updating the german name for spell {spell_id} took {time.perf_counter() - __ts: 0.2f}s.')
 
 
 def test():
