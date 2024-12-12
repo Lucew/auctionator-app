@@ -14,6 +14,7 @@ import collections
 class BaseNode:
     base_url: str = "https://db.rising-gods.de"
     query_parameter: str
+    marked: bool
 
     def __init__(self, base_id: int, required_amount: int, parent: 'BaseNode' = None, name: str = ""):
 
@@ -261,10 +262,14 @@ def request_name(item: BaseNode, language: str = 'de'):
         # get the infobox
         if keywords[-1] == 'Professions' or keywords[-1] == 'Berufe':
 
+            # get the profession name
             profession_name = keywords[-2]
 
+            # get the infobox
+            infobox = str(soup.find('table', {"class": "infobox"}))
+
             # get the lines with the requirements for skill
-            lines = [line.strip() for line in page.splitlines() if line.strip().startswith('Markup.printHtml("')]
+            lines = [line.strip() for line in infobox.splitlines() if line.strip().startswith('Markup.printHtml("')]
             assert len(lines) == 1, 'Could not find spell specification.'
             lines = re.findall(r'\[color=r\d+]\d+\[/color]', lines[0])
             if len(lines) >= 1:
@@ -277,10 +282,10 @@ def request_name(item: BaseNode, language: str = 'de'):
             cooldowns = [child.text for child in table.findChildren('tr', recursive=True)
                          if 'Cooldown' in child.text or 'Abklingzeit' in child.text]
             assert len(cooldowns) == 1, 'There are more cooldown than expected.'
-            cooldowns = cooldowns.pop()
+            cooldowns = cooldowns[0].strip()
 
             # check whether we have a cooldown
-            if 'n.' in cooldowns or 'n/' in cooldowns:
+            if cooldowns.endswith('n/a') or cooldowns.endswith('n. v.'):
                 cooldowns = 0
             else:
                 _, cooldowns, unit = cooldowns.split()
@@ -288,7 +293,8 @@ def request_name(item: BaseNode, language: str = 'de'):
                 cooldowns = int(cooldowns)*units[unit]
 
         # measure the time
-        logger.info(f'Request for item name (language {language}) took {time.perf_counter() - __ts:0.3f}s.')
+        logger.info(f'Request for {"Spell" if isinstance(item, SpellNode) else "Item"} {item.id} '
+                    f'(language {language}) took {time.perf_counter() - __ts:0.3f}s.')
         return item_name, profession_name, cooldowns, skill_level
     except AssertionError as e:
         logger.error(f'Request_Name error! {str(e)}')
@@ -296,4 +302,7 @@ def request_name(item: BaseNode, language: str = 'de'):
 
 
 if __name__ == '__main__':
-    create_item_craft_graph(49906)
+    # create_item_craft_graph(49906)
+    request_name(ItemNode(22854))
+    request_name(SpellNode(66658))
+    request_name(SpellNode(28589))

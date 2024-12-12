@@ -258,6 +258,15 @@ def side_bar():
     if item_name:
         item_name = item_name[0]
         st.sidebar.write(f'{item_name}: {item2id[item_name]}')
+
+    # put my name on the page
+    styl = f"""  
+    <div style="position: relative">
+            <p style="position: fixed; bottom: 0; text-align: center"> Made with 💝 by Lucas.
+            </p>
+    </div>
+    """
+    st.sidebar.markdown(styl, unsafe_allow_html=True)
     return choice
 
 
@@ -434,7 +443,8 @@ def crafter_page():
     spells, professions = cached_get_spells()
 
     # get the item selection
-    selection = st.number_input('Input the id of the item you want to craft (e.g., 49906)', 0, max(items.keys()), 49906)
+    selection = st.number_input('Input the id of the item you want to craft (e.g., 49906)', 0, max(items.keys()), 49906,
+                                on_change=reset_button)
 
     # Write the item
     if selection not in items:
@@ -645,6 +655,10 @@ def update_spells_from_reference_list(reference_list: dict[int: list[rcd.BaseNod
     unknown_spells = [rcd.SpellNode(spell_id) for spell_id, node_list in reference_list.items()
                       if node_list and isinstance(node_list[0], rcd.SpellNode) and spell_id not in spells]
 
+    # check whether there are unknown spells
+    if not unknown_spells:
+        return
+
     # create a button to update all spells
     st.write(f'Updating will take ~{int(len(unknown_spells)*(sleep_time+0.1)+1)}s')
     update_all_spells = st.button('Update Spells.', on_click=reset_button)
@@ -663,6 +677,36 @@ def update_spells_from_reference_list(reference_list: dict[int: list[rcd.BaseNod
     cached_get_spells.clear()
 
 
+def update_items_from_reference_list(reference_list: dict[int: list[rcd.BaseNode]], sleep_time: float = 0.4):
+
+    # check for unknown spells
+    items = cached_get_items()
+    unknown_items = [rcd.ItemNode(item_id) for item_id, node_list in reference_list.items()
+                     if node_list and isinstance(node_list[0], rcd.ItemNode) and not items[item_id][1]]
+
+    # check whether there are unknown items
+    if not unknown_items:
+        return
+
+    # create a button to update all spells
+    st.write(f'Updating will take ~{int(len(unknown_items)*(sleep_time+0.1)+1)}s')
+    update_all_spells = st.button('Update Items.', on_click=reset_button)
+    if not update_all_spells:
+        return
+    with st.spinner('Updating item names...'):
+        for item in unknown_items:
+
+            # get the name from the database
+            item_name = cache_request_name(item, language='de')[0]
+            time.sleep(sleep_time)
+
+            # update the database
+            pf.update_db_item_name_de(item.id, item_name)
+
+    # invalidate the items cache
+    cached_get_items.clear()
+
+
 # set the layout to wide
 st.set_page_config(layout="wide", page_title="Autionator")
 
@@ -676,5 +720,6 @@ if __choice == 'Analyzer':
 elif __choice == 'Crafter':
     __ref_list = crafter_page()
     update_spells_from_reference_list(__ref_list)
+    update_items_from_reference_list(__ref_list)
 elif __choice == 'Extender':
     extender_page()
