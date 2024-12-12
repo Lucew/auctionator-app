@@ -137,7 +137,18 @@ def filter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 # make a cached function to get the data stuff
 @st.cache_data
 def get_dataframe():
-    return pf.db2df(pf.get_item_prices())
+
+    # get the dataframe and name2link converter
+    df, name2link = pf.db2df(pf.get_item_prices())
+
+    # create an overview per item with all prices and turn prices per item into array
+    grouped_df = df.groupby(['Name', 'Id'])
+    grouped_df = grouped_df['Price'].describe().join(
+        grouped_df['Price'].apply(lambda x: [ele for ele in x.values]).to_frame('Prices'))
+
+    # delete Id from the index
+    grouped_df = grouped_df.reset_index(level=("Id",))
+    return df, name2link, grouped_df
 
 
 @st.cache_data
@@ -282,7 +293,7 @@ def analyzer_page():
              ' You can download all collected data on the left. This is a private project. Please use with caution!')
 
     # get the dataframe
-    df, name2link = get_dataframe()
+    df, name2link, grouped_df = get_dataframe()
     names = list(df['Name'].unique())
 
     # get the selection
@@ -314,11 +325,6 @@ def analyzer_page():
                                                                   tooltip=["Date", "Name", 'Gold'])
         st.altair_chart(c, use_container_width=True)
 
-    # create an overview per item
-    grouped_df = df.groupby('Name')
-    grouped_df = grouped_df['Price'].describe().join(
-        grouped_df['Price'].apply(lambda x: [ele for ele in x.values]).to_frame('Prices'))
-
     # style the dataframe
     cl_config = {"Prices": st.column_config.LineChartColumn("Prices"),
                  "_index": st.column_config.LinkColumn('Name', display_text=r"[?&]name=([^&#]+)$")}
@@ -346,7 +352,7 @@ def analyzer_page():
     st.write(f'Description of Price Distribution for {"the selected" if apply_selection else "all"}'
              f' Items (click columns to sort):')
     st.dataframe(display_df.style.format(style_format).format_index(urllib.parse.unquote, axis=1),
-                 column_config=cl_config)
+                 column_config=cl_config, use_container_width=True)
 
     # make a sidebar
     with st.sidebar:
