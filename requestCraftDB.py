@@ -79,6 +79,7 @@ class BaseNode:
 
             # update the stack
             stack.extend(curr.children.values())
+        return self
 
     def __str__(self):
         return f'{self.__class__} id={self.id} number={self.required_amount} {self.name if self.name else ""}'
@@ -250,12 +251,48 @@ def request_name(item: BaseNode, language: str = 'de'):
             assert title.text.endswith(end_str), f'Title weird for {item.url}: {title}.'
         item_name = title.text[:-len(end_str)]
 
+        # check whether this spell is from some tradework
+        keywords = soup.find('meta', {'name': "keywords"})
+        keywords = str(keywords).split('"')[1].split(', ')
+        profession_name = ""
+        cooldowns = 0
+        skill_level = 0
+
+        # get the infobox
+        if keywords[-1] == 'Professions' or keywords[-1] == 'Berufe':
+
+            profession_name = keywords[-2]
+
+            # get the lines with the requirements for skill
+            lines = [line.strip() for line in page.splitlines() if line.strip().startswith('Markup.printHtml("')]
+            assert len(lines) == 1, 'Could not find spell specification.'
+            lines = re.findall(r'\[color=r\d+]\d+\[/color]', lines[0])
+            if len(lines) >= 1:
+                lines = re.findall("]\d+\[", lines[0])
+                skill_level = int(lines[0][1:-1])
+
+            # get the cooldown if there is
+            table = soup.find('table', {"class": "grid", "id": "spelldetails"})
+            assert table is not None, 'Could not find the details table.'
+            cooldowns = [child.text for child in table.findChildren('tr', recursive=True)
+                         if 'Cooldown' in child.text or 'Abklingzeit' in child.text]
+            assert len(cooldowns) == 1, 'There are more cooldown than expected.'
+            cooldowns = cooldowns.pop()
+
+            # check whether we have a cooldown
+            if 'n.' in cooldowns or 'n/' in cooldowns:
+                cooldowns = 0
+            else:
+                _, cooldowns, unit = cooldowns.split()
+                units = {'hours': 3600, 'minutes': 60, 'seconds': 1, 'Stunden': 3600, 'Minuten': 60, 'Sekunden': 1}
+                cooldowns = int(cooldowns)*units[unit]
+
         # measure the time
         logger.info(f'Request for item name (language {language}) took {time.perf_counter() - __ts:0.3f}s.')
-        return item_name
+        return item_name, profession_name, cooldowns, skill_level
     except AssertionError as e:
         logger.error(f'Request_Name error! {str(e)}')
-        return None
+        return None, None, None, None
 
 
 if __name__ == '__main__':

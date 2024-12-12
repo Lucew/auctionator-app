@@ -162,6 +162,10 @@ class SpellNames(Base):
     __tablename__ = 'spell_names'
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    profession_name: Mapped[str]
+    profession_name_de: Mapped[str]
+    cooldown: Mapped[int]
+    skill: Mapped[int]
     name_de: Mapped[str]
     name_en: Mapped[str]
     name_misc: Mapped[str]

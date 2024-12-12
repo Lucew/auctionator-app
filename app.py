@@ -227,11 +227,14 @@ def side_bar():
         stringio = uploaded_file.getvalue().decode("utf-8")
 
         # parse the string
-        success_val, succes_str = pf.write_data(stringio)
+        success_val, succes_str, skipped_items = pf.write_data(stringio)
+
         if success_val:
 
-            # write the information to the databsae
+            # write the information to the database
             st.sidebar.write(succes_str)
+            st.sidebar.write(f'Skipped {skipped_items[-1][1][0]}/{skipped_items[-1][2][0]} items due to missing id.')
+            st.sidebar.write(f'Skipped {skipped_items[-1][1][1]}/{skipped_items[-1][2][1]} items due to missing name.')
 
             # save the file onto the disc
             file_path = os.path.join(os.getcwd(), 'save', f'{time.time()}_auctionator.lua')
@@ -376,6 +379,50 @@ def analyzer_page():
             logger.info(f'Download XLSX-File {"(selection)" if download_type == "Selection" else ""}.')
 
 
+def prune_graph(graph: rcd.BaseNode, allowed_professions: set[str], maximum_cooldown: int,
+                skill_per_profession: dict[str:int]):
+
+    # get the spells
+    spells, _ = cached_get_spells()
+
+    # check that we got a root
+    assert graph.parent is None, 'Can only prune from root.'
+    assert isinstance(graph, rcd.ItemNode), 'Root is a spell.'
+
+    # go through the nodes and make the checks
+    stack = [graph]
+    while stack:
+
+        # get the current node
+        node = stack.pop()
+
+        # make the checks
+        child_keys = list(node.children.keys())
+        for child_key in child_keys:
+
+            # get the child
+            child = node.children[child_key]
+
+            # check whether it is a spell and we have information
+            if isinstance(child, rcd.ItemNode) or child.id not in spells:
+                stack.append(child)
+                continue
+
+            # get the spell information
+            name_en, name_de, cooldown, profession_name, skill = spells[child.id]
+
+            if profession_name not in allowed_professions or cooldown > maximum_cooldown or \
+                    skill > skill_per_profession[profession_name]:
+                # we need to prune this child
+                del node.children[child_key]
+            else:
+                stack.append(node.children[child_key])
+
+
+def reset_button():
+    st.session_state['graph-button'] = False
+
+
 def crafter_page():
     logger = logging.getLogger('auctionator')
 
@@ -384,7 +431,7 @@ def crafter_page():
 
     # get all the items we have
     items = cached_get_items()
-    spells = cached_get_spells()
+    spells, professions = cached_get_spells()
 
     # get the item selection
     selection = st.number_input('Input the id of the item you want to craft (e.g., 49906)', 0, max(items.keys()), 49906)
@@ -398,36 +445,50 @@ def crafter_page():
     item = rcd.ItemNode(selection)
     st.markdown(f"[{items[selection][0]}]({item.url})")
 
-    # a checkbox to show a graph
-    show_craft_graph = st.checkbox('Show Craft Graph (might consume large memory in your browser).', False)
+    # make the configuration (and reset the graph button along the way
+    with st.expander("Configuration"):
+
+        # create some columns
+        col1, col2 = st.columns(2)
+
+        # make a multiselect for the allowed profession
+        allowed_professions = set(col1.multiselect('Select allowed professions', professions, professions,
+                                                   on_change=reset_button))
+
+        # make a number input how much cooldown any spell can have
+        maximum_cooldown = col2.number_input('Maximum cooldown (s)', 0, 1_000_000, 100_000, on_change=reset_button)
+
+        # create a number input for the profession level
+        profession_skill = dict()
+        for profession in allowed_professions:
+            profession_skill[profession] = col1.number_input(f'{profession} - Maximum Skill', 0, 450, 450,
+                                                             on_change=reset_button)
 
     # request the rising gods database for the crafting graph
-    reference_list = None
     with st.spinner('Wait for it...'):
 
         # get the recipe from the database (4096 is a problem)
         root = cache_crafting_recipe(selection)
 
-        # get the reference list
-        reference_list = root.get_reference_list()
+        # prune the graph
+        prune_graph(root, allowed_professions, maximum_cooldown, profession_skill)
 
         # set the names of the spells
         root.set_names(spells, items, return_when_name=True)
 
+        # get the reference list
+        reference_list = root.get_reference_list()
+
         # get the prices for the reference list
         recent_prices = pf.get_most_recent_item_price()
         recent_prices = collections.defaultdict(lambda: float('inf'), recent_prices)
-
-        # make the craft flow
-        if show_craft_graph:
-            ccf.create_flow(root, recent_prices)
 
         # make dfs through the item tree
         def dfs(node):
             # we reached a leaf
             if len(node.children) == 0:
                 assert isinstance(node, rcd.ItemNode), 'Something is off.'
-                return recent_prices[node.id], [(node.id, 1)]
+                return recent_prices[node.id]*node.required_amount, [(node.id, node.required_amount)]
 
             # if we are a spell node, we need to sum the items we use
             if isinstance(node, rcd.SpellNode):
@@ -438,8 +499,8 @@ def crafter_page():
                 item_dict = collections.defaultdict(int)
                 tmp_price = 0
                 for pprice, item_path in curr_price:
-                    for item, number in item_path:
-                        item_dict[item] += number
+                    for __item, number in item_path:
+                        item_dict[__item] += number
                     tmp_price += pprice
 
                 # get the path again
@@ -452,16 +513,23 @@ def crafter_page():
                 curr_price = min((dfs(child) for child in node.children.values()), key=lambda x: x[0])
 
                 # check the option to just take the item itself
-                if recent_prices[node.id] < curr_price[0]:
-                    curr_price = (recent_prices[node.id], [(node.id, 1)])
+                own_price = recent_prices[node.id]*node.required_amount
+                if own_price < curr_price[0]:
+                    curr_price = (own_price, [(node.id, node.required_amount)])
             else:
                 raise ValueError('Something is off.')
             return curr_price
         # get the cheapest combination
         __ts = time.perf_counter()
         cheap_price, cheap_combo = dfs(root)
-        logger.info(f'Searching the graph for item {root.id} (name={items.get(root.id, ("NOT FOUND", ""))[0]}) '
-                    f'took {time.perf_counter()-__ts:0.4f}s.')
+
+        # a checkbox to show a graph
+        show_craft_graph = st.checkbox('Show Craft Graph (might consume large memory in your browser).', False,
+                                       key='graph-button')
+
+        # make the craft flow
+        if show_craft_graph:
+            ccf.create_flow(root, recent_prices, spells)
 
         # write out all the option
         link_list = [f"{root.base_url}/?item={ele}" for ele, _ in cheap_combo]
@@ -471,6 +539,8 @@ def crafter_page():
             st.write('Best crafting path:')
             st.markdown(pf.price2gold(cheap_price) + "-".join(f'[{items[ele][0]}]({linked}) ({number})'
                                                               for (ele, number), linked in zip(cheap_combo, link_list)))
+        logger.info(f'Searching the graph for item {root.id} (name={items.get(root.id, ("NOT FOUND", ""))[0]}) '
+                    f'took {time.perf_counter() - __ts:0.4f}s.')
     return reference_list
 
 
@@ -509,7 +579,7 @@ def extend_item():
     st.divider()
     # get the name from the database
     with st.spinner('Requesting Name...'):
-        item_name = cache_request_name(item, language='de')
+        item_name = cache_request_name(item, language='de')[0]
 
     # update the name
     if item_name is not None:
@@ -528,10 +598,10 @@ def extend_item():
 def extend_spell():
 
     # enter some spell id
-    curr_spell = st.number_input('Input the id of the item you want to change (e.g., 49906)', 0, 1_000_000, 70566)
+    curr_spell = st.number_input('Input the id of the spell you want to change (e.g., 70566)', 0, 1_000_000, 70566)
 
     # get all the items we have
-    spells = cached_get_spells()
+    spells, _ = cached_get_spells()
 
     # create the corresponding item
     spell = rcd.SpellNode(curr_spell)
@@ -546,8 +616,8 @@ def extend_spell():
 
     # get the name from the database
     with st.spinner('Requesting Name...'):
-        spell_name = cache_request_name(spell, language='de')
-        spell_name_en = cache_request_name(spell, language='en')
+        spell_name, profession_name, cooldown, skill_level = cache_request_name(spell, language='de')
+        spell_name_en, profession_name_en, _, _ = cache_request_name(spell, language='en')
 
     # update the name
     if spell_name is not None:
@@ -558,7 +628,8 @@ def extend_spell():
         if updater:
 
             # update the database
-            pf.insert_db_spell_name(spell.id, spell_name, spell_name_en)
+            pf.insert_db_spell_name(spell.id, spell_name, spell_name_en,
+                                    profession_name, profession_name_en, cooldown, skill_level)
             st.write('✅')
 
             # invalidate the spells cache
@@ -570,21 +641,22 @@ def extend_spell():
 def update_spells_from_reference_list(reference_list: dict[int: list[rcd.BaseNode]], sleep_time: float = 0.4):
 
     # check for unknown spells
-    spells = cached_get_spells()
+    spells, _ = cached_get_spells()
     unknown_spells = [rcd.SpellNode(spell_id) for spell_id, node_list in reference_list.items()
                       if node_list and isinstance(node_list[0], rcd.SpellNode) and spell_id not in spells]
 
     # create a button to update all spells
     st.write(f'Updating will take ~{int(len(unknown_spells)*(sleep_time+0.1)+1)}s')
-    update_all_spells = st.button('Update Spells.')
+    update_all_spells = st.button('Update Spells.', on_click=reset_button)
     if not update_all_spells:
         return
     with st.spinner('Updating spell names...'):
         for spell in unknown_spells:
-            spell_name = cache_request_name(spell, language='de')
-            spell_name_en = cache_request_name(spell, language='en')
+            spell_name, profession_name, cooldown, skill_level = cache_request_name(spell, language='de')
+            spell_name_en, profession_name_en, _, _ = cache_request_name(spell, language='en')
             if spell_name and spell_name_en:
-                pf.insert_db_spell_name(spell.id, spell_name, spell_name_en)
+                pf.insert_db_spell_name(spell.id, spell_name, spell_name_en,
+                                        profession_name, profession_name_en, cooldown, skill_level)
             time.sleep(sleep_time)
 
     # invalidate the cache

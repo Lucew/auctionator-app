@@ -15,6 +15,7 @@ import createDatabase as cdb
 
 def parse_data(content: str = None):
     __ts = time.perf_counter()
+    logger = logging.getLogger('auctionator')
 
     if content is None:
         # read the file into memory
@@ -80,9 +81,86 @@ def parse_data(content: str = None):
         # replace the old dictionary
         history[item] = value_dict
 
-    logger = logging.getLogger('auctionator')
-    logger.info(f'Parsing took {time.perf_counter()-__ts: 0.2f}s')
-    return history
+    # get the items from the database
+    items = get_items()
+
+    # make dictionaries
+    item_names = {name: ided for ided, names in items.items() for name in names if name}
+
+    # make dicts to transform the names
+    skipped_items = []
+    for item, value_dict in history.items():
+        # get the current id
+        curr_id = int(value_dict['is'][0])
+
+        # check whether we can find this item in our database
+        if curr_id not in items:
+
+            # keep track of skipped items
+            error_str = f'Invalid Items in File - Id Unknown! Error with Item {item}, Id={curr_id}.'
+            skipped_items.append((item, curr_id, error_str))
+
+    # delete the corresponding item
+    for item, _, _ in skipped_items:
+        del history[item]
+
+    # save how many we skipped from the pricing history
+    skipped_pricing_history = len(skipped_items)
+    pricing_history_items = len(history)
+
+    # parse the recent scan
+    scan_line = [line for line in content.splitlines() if line.startswith("AUCTIONATOR_LAST_SCAN_TIME")]
+    assert len(scan_line) <= 1, 'Something with the .lua file is off.'
+    scan_time = int(scan_line[0].split(' = ')[-1])
+
+    # check that the line exists
+    scan = []
+    if scan_line:
+
+        # check that we have the price database history
+        scan = variable_dict['AUCTIONATOR_PRICE_DATABASE']
+
+        # check that it is the right db verions
+        if scan['__dbversion'] != 2:
+            error_str = f'Invalid dbversion in this file! dbverions: {scan["__dbversion"]}.'
+            logger.error(f'Logging error! --> {error_str}')
+            return False, error_str
+
+        # check that its is the right server
+        if "Rising-Gods_Alliance" not in scan:
+            error_str = f'Your lua file does not contain scan information from Rising Gods.'
+            logger.error(f'Logging error! --> {error_str}')
+            return False, error_str
+
+        # extract the scan
+        scan = scan["Rising-Gods_Alliance"]
+
+        # check whether we find items with the names in the dict
+        for name, value in scan.items():
+
+            # continue if we have not yet found a name
+            if name not in item_names:
+                error_str = f'Could not find item with name {name} in our database.'
+                logger.info(error_str)
+                skipped_items.append((name, -1, error_str))
+                continue
+
+            # link the item name to an id
+            item_id = item_names[name]
+
+            # create a history entry for the current item
+            if name not in history:
+                history[name] = dict()
+                history[name]['is'] = (item_id, 0)
+            history[name][(scan_time, "")] = (int(value), 1)
+
+    logger.info(f'Parsing took {time.perf_counter()-__ts: 0.2f}s. We skipped: {skipped_pricing_history}(missing id) + '
+                f'{len(skipped_items)-skipped_pricing_history} (missing name).')
+
+    # append the values to the skipped items
+    skipped_items.append(("", (skipped_pricing_history, len(skipped_items)-skipped_pricing_history),
+                          (pricing_history_items, len(scan))))
+    return history, skipped_items
 
 
 def convert_auctionator_time(time_int:int, zero_time: float):
@@ -104,30 +182,12 @@ def write_to_database(hist: dict[tuple[int|str, str]: tuple[int, int]]):
     cdb.Base.metadata.create_all(db)
 
     # go through the data and create items if necessary, otherwise check that id is unique
-    for item, value_dict in hist.items():
+    for _, value_dict in hist.items():
 
         # get the current id
         curr_id = int(value_dict['is'][0])
 
-        # check whether we already have the id or the name
-        check_query = session.query(cdb.Item).filter_by(item_id=curr_id).all()
-        if check_query:
-            try:
-                assert check_query[0].item_id == curr_id, f'Something with {item}:{curr_id} is off.'
-
-                # check whether we are missing german names in the database and the name is german
-                # then we update the name
-                for itt in check_query:
-                    if itt.name_de == "" and item != itt.name:
-                        itt.name_de = item
-            except AssertionError as e:
-                logger.error(f'Logging error! AssertionError --> {str(e)}')
-                return False, f'Invalid Items in File (english client?). Error with Item {item}, Id={curr_id}.'
-        else:
-            error_str = f'Invalid Items in File - Id Unknown! Error with Item {item}, Id={curr_id}.'
-            logger.error(f'Logging error! --> {error_str}')
-            return False, error_str
-
+        # go through the prices and write them to the database
         for typed, stacks in value_dict.items():
 
             # skip the id
@@ -190,12 +250,14 @@ def get_spells():
     result = session.query(cdb.SpellNames).all()
 
     # collect the results
-    spell_dict = {spell.id: (spell.name_en, spell.name_de) for spell in result}
+    spell_dict = {spell.id: (spell.name_en, spell.name_de, spell.cooldown, spell.profession_name, spell.skill)
+                  for spell in result}
+    professions = list(set(ele[3] for ele in spell_dict.values() if ele[3]))
 
     # logg the time it took
     logger = logging.getLogger('auctionator')
     logger.info(f'Querying the DB for all spells took {time.perf_counter() - __ts: 0.2f}s')
-    return spell_dict
+    return spell_dict, professions
 
 
 def get_most_recent_item_price():
@@ -268,13 +330,16 @@ def get_cell_name(row: int, col: int) -> str:
 def write_data(input_str: str = None):
     logger = logging.getLogger('auctionator')
     try:
-        history = parse_data(input_str)
+        history, skipped_items = parse_data(input_str)
     except ValueError as e:
         logger.error(f'Parsing error: ValueError --> {str(e)}.')
-        return False, 'Invalid Lua file.'
+        return False, 'Invalid Lua file.', []
+    except AssertionError as e:
+        logger.error(f'Parsing error: AssertionError --> {str(e)}.')
+        return False, 'Invalid Lua file.', []
     write_success = write_to_database(history)
     # write_to_gsheet(prices_dict)
-    return write_success
+    return *write_success, skipped_items
 
 
 def price2gold(price: float):
@@ -331,27 +396,51 @@ def update_db_item_name_de(item_id: int, name: str):
     logger.info(f'Updating the german name for item {item_id} took {time.perf_counter() - __ts: 0.2f}s.')
 
 
-def insert_db_spell_name(spell_id: int, name_de: str, name_en: str):
+def insert_db_spell_name(spell_id: int, name_de: str, name_en: str, profession_name: str, profession_name_en: str,
+                         cooldown: int, skill_level: int):
     __ts = time.perf_counter()
 
     # get the session to the database
     db = sqlalchemy.create_engine('sqlite:///auctionator.db')
     session = sqlalchemy.orm.Session(db)
     cdb.Base.metadata.create_all(db)
+    query = session.query(cdb.SpellNames).filter(cdb.SpellNames.id == spell_id).one_or_none()
 
-    # update the item
-    query = f'INSERT INTO spell_names VALUES ({spell_id}, "{name_de}", "{name_en}", "");'
-    session.execute(sqlalchemy.text(query))
-    session.commit()
+    if query is None:
+        # update the item
+        query = f'INSERT INTO spell_names VALUES ({spell_id}, "{profession_name}", "{profession_name_en}", {cooldown}, {skill_level}, "{name_de}", "{name_en}", "");'
+        session.execute(sqlalchemy.text(query))
+        session.commit()
 
     # logg the time and execution
     logger = logging.getLogger('auctionator')
     logger.info(f'Updating the german name for spell {spell_id} took {time.perf_counter() - __ts: 0.2f}s.')
 
 
+def clean_item_database():
+
+    # delete all items that have expansion four
+    # or have an item with a larger expansion
+    statement = "DELETE FROM items AS it1 WHERE it1.expansion_id == 4 OR " \
+                "(SELECT COUNT(*) FROM items AS it2 WHERE it2.item_id == it1.item_id " \
+                "and it2.expansion_id > it1.expansion_id) == 1"
+
+    # get the session to the database
+    db = sqlalchemy.create_engine('sqlite:///auctionator.db')
+    session = sqlalchemy.orm.Session(db)
+    cdb.Base.metadata.create_all(db)
+
+    # execute the statment
+    session.execute(sqlalchemy.text(statement))
+    # session.execute(sqlalchemy.text('DROP TABLE spell_names'))
+    session.commit()
+
+
 def test():
-    write_data()
-    get_item_prices()
+    clean_item_database()
+    parse_data()
+    # write_data()
+    # get_item_prices()
 
 
 if __name__ == '__main__':

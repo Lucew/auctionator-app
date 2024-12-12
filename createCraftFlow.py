@@ -8,19 +8,40 @@ import requestCraftDB as rcd
 import parseFile as pf
 
 
-def create_content_str(item: rcd.BaseNode, recent_prices: collections.defaultdict[int: [int|float]]):
-    price = recent_prices[item.id]
-    content_str = f'{"Item" if isinstance(item, rcd.ItemNode) else "Spell"} ' \
-                  f'{item.name} Id={item.id} ({item.required_amount})\n' \
-                  f'Price: {"?" if price == float("inf") else pf.price2gold(price*item.required_amount)}'
+def create_content_str(item: rcd.BaseNode, recent_prices: collections.defaultdict[int: [int | float]],
+                       spells: dict[int: (str, str, int, str, str)]):
+    if isinstance(item, rcd.ItemNode):
+        price = recent_prices[item.id]
+        content_str = f"""
+Item {item.name}
+
+Id: {item.id}
+Amount: ({item.required_amount})
+
+Price: {"?" if price == float("inf") else pf.price2gold(price*item.required_amount)}
+"""
+    else:
+        _, name, cooldown, profession_name, skill = spells.get(item.id, ("", "", 0, "", 0))
+        content_str = f"""
+Spell {item.name}
+
+Id: {item.id}
+
+{profession_name} {">=" if profession_name and skill else ""} {"" if not skill else skill}
+
+{"Cooldown: " if cooldown else ""}{cooldown if cooldown else ""}{"s" if cooldown else ""}.
+"""
     return content_str
 
 
-def create_flow(root: rcd.ItemNode, recent_prices: collections.defaultdict[int: [int|float]]):
+def create_flow(root: rcd.ItemNode, recent_prices: collections.defaultdict[int: [int | float]],
+                spells: dict[int: (str, str, int, str, str)]):
+    # spells has the following format:
+    # spell.name_en, spell.name_de, spell.cooldown, spell.profession_name, spell.skill
 
     # traverse the graph using layer wise bfs and create the nodes and edges
     flow_node = StreamlitFlowNode(id='0.0', pos=(0, 0),
-                                  data={'content': create_content_str(root, recent_prices)},
+                                  data={'content': create_content_str(root, recent_prices, spells)},
                                   node_type='input', source_position='right', target_position='left')
     layer = [(root, flow_node)]
     nodes = [flow_node]
@@ -34,8 +55,8 @@ def create_flow(root: rcd.ItemNode, recent_prices: collections.defaultdict[int: 
             for child in node.children.values():
 
                 # create a new node
-                flow_node = StreamlitFlowNode(id=f'{level+1}.{len(children)}', pos=(level*200, 50*len(children)),
-                                              data={'content': create_content_str(child, recent_prices)},
+                flow_node = StreamlitFlowNode(id=f'{level+1}.{len(children)}', pos=(level*300, 50*len(children)),
+                                              data={'content': create_content_str(child, recent_prices, spells)},
                                               node_type='default', source_position='right', target_position='left')
 
                 # create a new edge
