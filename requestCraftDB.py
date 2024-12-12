@@ -295,8 +295,9 @@ def request_name(item: BaseNode, language: str = 'de'):
                 cooldowns = 0
             else:
                 _, cooldowns, unit = cooldowns.split()
-                units = {'hours': 3600, 'minutes': 60, 'seconds': 1, 'Stunden': 3600, 'Minuten': 60, 'Sekunden': 1}
-                cooldowns = int(cooldowns)*units[unit]
+                units = {'days': 86400, 'hours': 3600, 'minutes': 60, 'seconds': 1, 'Tage': 86400,
+                         'Stunden': 3600, 'Minuten': 60, 'Sekunden': 1}
+                cooldowns = float(cooldowns)*units[unit]
 
         # measure the time
         logger.info(f'Request for {"Spell" if isinstance(item, SpellNode) else "Item"} {item.id} '
@@ -312,3 +313,6 @@ if __name__ == '__main__':
     request_name(ItemNode(22854))
     request_name(SpellNode(66658))
     request_name(SpellNode(28589))
+    request_name(SpellNode(54222))
+    request_name(SpellNode(53812))
+    request_name(SpellNode(60893))
