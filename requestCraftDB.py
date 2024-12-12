@@ -14,7 +14,7 @@ import collections
 class BaseNode:
     base_url: str = "https://db.rising-gods.de"
     query_parameter: str
-    marked: bool
+    marked: bool = False
 
     def __init__(self, base_id: int, required_amount: int, parent: 'BaseNode' = None, name: str = ""):
 
@@ -102,6 +102,12 @@ class BaseNode:
 
     def __hash__(self):
         return self.url
+
+    def mark(self):
+        self.marked = True
+
+    def unmark(self):
+        self.marked = False
 
 
 class SpellNode(BaseNode):

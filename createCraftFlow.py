@@ -42,7 +42,8 @@ def create_flow(root: rcd.ItemNode, recent_prices: collections.defaultdict[int: 
     # traverse the graph using layer wise bfs and create the nodes and edges
     flow_node = StreamlitFlowNode(id='0.0', pos=(0, 0),
                                   data={'content': create_content_str(root, recent_prices, spells)},
-                                  node_type='input', source_position='right', target_position='left')
+                                  node_type='input', source_position='right', target_position='left',
+                                  style={'border': '5px solid black'})
     layer = [(root, flow_node)]
     nodes = [flow_node]
     edges = []
@@ -57,7 +58,8 @@ def create_flow(root: rcd.ItemNode, recent_prices: collections.defaultdict[int: 
                 # create a new node
                 flow_node = StreamlitFlowNode(id=f'{level+1}.{len(children)}', pos=(level*300, 50*len(children)),
                                               data={'content': create_content_str(child, recent_prices, spells)},
-                                              node_type='default', source_position='right', target_position='left')
+                                              node_type='default', source_position='right', target_position='left',
+                                              style={'border': '5px solid black'} if child.marked else dict())
 
                 # create a new edge
                 flow_edge = StreamlitFlowEdge(f'{flnode.id}-{flow_node.id}', str(flnode.id), str(flow_node.id),

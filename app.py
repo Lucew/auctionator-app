@@ -498,7 +498,9 @@ def crafter_page():
             # we reached a leaf
             if len(node.children) == 0:
                 assert isinstance(node, rcd.ItemNode), 'Something is off.'
-                return recent_prices[node.id]*node.required_amount, [(node.id, node.required_amount)]
+
+                # every dfs returns the current price, the current items that are necessary and the path it took
+                return recent_prices[node.id]*node.required_amount, [(node.id, node.required_amount)], [node]
 
             # if we are a spell node, we need to sum the items we use
             if isinstance(node, rcd.SpellNode):
@@ -508,13 +510,18 @@ def crafter_page():
                 # fuse the items together
                 item_dict = collections.defaultdict(int)
                 tmp_price = 0
-                for pprice, item_path in curr_price:
+                tmp_path = []
+                for pprice, item_path, path in curr_price:
                     for __item, number in item_path:
                         item_dict[__item] += number
+                    tmp_path.extend(path)
                     tmp_price += pprice
 
+                # append the own spell
+                tmp_path.append(node)
+
                 # get the path again
-                curr_price = (tmp_price, list(item_dict.items()))
+                curr_price = (tmp_price, list(item_dict.items()), tmp_path)
 
             # if we are an item node, we need to find the cheapest option
             elif isinstance(node, rcd.ItemNode):
@@ -525,13 +532,18 @@ def crafter_page():
                 # check the option to just take the item itself
                 own_price = recent_prices[node.id]*node.required_amount
                 if own_price < curr_price[0]:
-                    curr_price = (own_price, [(node.id, node.required_amount)])
+                    curr_price = (own_price, [(node.id, node.required_amount)], [node])
             else:
                 raise ValueError('Something is off.')
             return curr_price
         # get the cheapest combination
         __ts = time.perf_counter()
-        cheap_price, cheap_combo = dfs(root)
+        cheap_price, cheap_combo, best_path = dfs(root)
+
+        # go through the nodes that are in the path and mark them
+        if cheap_price != float('inf'):
+            for node in best_path:
+                node.mark()
 
         # a checkbox to show a graph
         show_craft_graph = st.checkbox('Show Craft Graph (might consume large memory in your browser).', False,
