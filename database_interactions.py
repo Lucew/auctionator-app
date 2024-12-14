@@ -99,7 +99,9 @@ def get_spells():
         # collect the profession
         professions = collections.defaultdict(list)
         for spell in result:
-            professions[spell.profession_name].append(spell.id)
+            # check that profession is not empty
+            if spell.profession_name:
+                professions[spell.profession_name].append(spell.id)
 
     # logg the time it took
     logger = logging.getLogger('auctionator')
