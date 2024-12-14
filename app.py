@@ -647,7 +647,7 @@ def update_spells_from_reference_list(reference_list: dict[int: list[rgdb.BaseNo
 
     # create a button to update all spells
     st.write(f'Updating will take ~{int(len(unknown_spells)*(sleep_time+0.1)+1)}s')
-    update_all_spells = st.button('Update Spells.', on_change=reset_button)
+    update_all_spells = st.button('Update Spells.', on_click=reset_button)
     if not update_all_spells:
         return
     with st.spinner('Updating spell names...'):
@@ -676,7 +676,7 @@ def update_items_from_reference_list(reference_list: dict[int: list[rgdb.BaseNod
 
     # create a button to update all spells
     st.write(f'Updating will take ~{int(len(unknown_items)*(sleep_time+0.1)+1)}s')
-    update_all_spells = st.button('Update Items.', on_change=reset_button)
+    update_all_spells = st.button('Update Items.', on_click=reset_button)
     if not update_all_spells:
         return
     with st.spinner('Updating item names...'):
