@@ -17,7 +17,8 @@ class Price (Base):
     stacks: Mapped[int]
 
     def __repr__(self) -> str:
-        return f"price(item.id={self.id!r}, unix_timestamp={self.unix_timestamp!r}, price={self.price!r}, stacks={self.stacks!r})"
+        return f"price(item.id={self.id!r}, unix_timestamp={self.unix_timestamp!r}, " \
+               f"price={self.price!r}, stacks={self.stacks!r})"
 
 
 class Item(Base):

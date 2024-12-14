@@ -1,29 +1,27 @@
 import time
-
-import streamlit as st
-import altair as alt
 import io
-import pandas as pd
 import datetime
-from pandas.api.types import (
-    is_categorical_dtype,
-    is_datetime64_any_dtype,
-    is_numeric_dtype,
-    is_object_dtype,
-)
-import urllib.parse
 import logging
 import re
 import collections
 import os
 
+import streamlit as st
+import altair as alt
+import pandas as pd
+from pandas.api.types import (
+    is_datetime64_any_dtype,
+    is_numeric_dtype,
+)
+import urllib.parse
 
-import requestCraftDB as rcd
-import parseFile as pf
-import createCraftFlow as ccf
+
+import rg_database_interactions as rgdb
+import database_interactions as daint
+import create_crafter_flow as ccf
 
 
-def get_remote_ip() -> [str|None]:
+def get_remote_ip() -> [str | None]:
     """Get remote ip."""
     # https://github.com/NginxProxyManager/nginx-proxy-manager/issues/674#issuecomment-717459734 for Nginx Proxy Manager
     # https://docs.streamlit.io/develop/api-reference/utilities/st.context for headers
@@ -139,7 +137,7 @@ def filter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 def get_dataframe():
 
     # get the dataframe and name2link converter
-    df, name2link = pf.db2df(pf.get_item_prices())
+    df, name2link = daint.db2df(daint.get_item_prices())
 
     # create an overview per item with all prices and turn prices per item into array
     grouped_df = df.groupby(['Name', 'Id'])
@@ -153,12 +151,12 @@ def get_dataframe():
 
 @st.cache_data
 def cached_get_items():
-    return pf.get_items()
+    return daint.get_items()
 
 
 @st.cache_resource
 def cached_get_spells():
-    return pf.get_spells()
+    return daint.get_spells()
 
 
 # IMPORTANT: Cache the conversion to prevent computation on every rerun
@@ -177,15 +175,16 @@ def convert_df(df, typed: str):
 
 
 # cache some of the crafting data
-@st.cache_data(max_entries=20)
+@st.cache_data(max_entries=100)
 def cache_crafting_recipe(item_id: int):
-    return rcd.create_item_craft_graph(item_id)
+    return rgdb.create_item_craft_graph(item_id)
 
 
 # cache some of the item database requests
-@st.cache_data(max_entries=20, hash_funcs={rcd.ItemNode: rcd.BaseNode.__hash__, rcd.SpellNode: rcd.BaseNode.__hash__})
-def cache_request_name(item: rcd.BaseNode, language: str):
-    return rcd.request_name(item, language)
+@st.cache_data(max_entries=20, hash_funcs={rgdb.ItemNode: rgdb.BaseNode.__hash__,
+                                           rgdb.SpellNode: rgdb.BaseNode.__hash__})
+def cache_request_name(item: rgdb.BaseNode, language: str):
+    return rgdb.request_name(item, language)
 
 
 def item_selector(names: list[str], multiselect: bool = True):
@@ -238,7 +237,7 @@ def side_bar():
         stringio = uploaded_file.getvalue().decode("utf-8")
 
         # parse the string
-        success_val, succes_str, skipped_items = pf.write_data(stringio)
+        success_val, succes_str, skipped_items = daint.write_data(stringio)
 
         if success_val:
 
@@ -269,6 +268,12 @@ def side_bar():
     if item_name:
         item_name = item_name[0]
         st.sidebar.write(f'{item_name}: {item2id[item_name]}')
+
+    # make a button to invalidate the cache
+    st.sidebar.header('Page Settings')
+    if st.sidebar.button('Invalidate Cache'):
+        st.cache_data.clear()
+        st.cache_resource.clear()
 
     # put my name on the page
     styl = f"""  
@@ -330,7 +335,7 @@ def analyzer_page():
                  "_index": st.column_config.LinkColumn('Name', display_text=r"[?&]name=([^&#]+)$")}
     style_format = dict()
     for name in grouped_df.columns[1:-1]:
-        style_format[name] = pf.price2gold
+        style_format[name] = daint.price2gold
     style_format['count'] = int
 
     # make a checkbox whether to apply selection
@@ -394,7 +399,7 @@ def analyzer_page():
             logger.info(f'Download XLSX-File {"(selection)" if download_type == "Selection" else ""}.')
 
 
-def prune_graph(graph: rcd.BaseNode, allowed_professions: set[str], maximum_cooldown: int,
+def prune_graph(graph: rgdb.BaseNode, allowed_professions: set[str], maximum_cooldown: int,
                 skill_per_profession: dict[str:int]):
 
     # get the spells
@@ -402,7 +407,7 @@ def prune_graph(graph: rcd.BaseNode, allowed_professions: set[str], maximum_cool
 
     # check that we got a root
     assert graph.parent is None, 'Can only prune from root.'
-    assert isinstance(graph, rcd.ItemNode), 'Root is a spell.'
+    assert isinstance(graph, rgdb.ItemNode), 'Root is a spell.'
 
     # go through the nodes and make the checks
     stack = [graph]
@@ -419,7 +424,7 @@ def prune_graph(graph: rcd.BaseNode, allowed_professions: set[str], maximum_cool
             child = node.children[child_key]
 
             # check whether it is a spell and we have information
-            if isinstance(child, rcd.ItemNode) or child.id not in spells:
+            if isinstance(child, rgdb.ItemNode) or child.id not in spells:
                 stack.append(child)
                 continue
 
@@ -455,10 +460,11 @@ def crafter_page():
     # Write the item
     if selection not in items:
         st.warning(f'Item with id {selection} not found.', icon="⚠️")
-        return
+        return dict()
+
     # write the name of the item
     st.header(f'{" ".join(ele.capitalize() for ele in items[selection][0].split())} - {selection}')
-    item = rcd.ItemNode(selection)
+    item = rgdb.ItemNode(selection)
     st.markdown(f"[{items[selection][0]}]({item.url})")
 
     # make the configuration (and reset the graph button along the way
@@ -468,7 +474,8 @@ def crafter_page():
         col1, col2 = st.columns(2)
 
         # make a multiselect for the allowed profession
-        allowed_professions = set(col1.multiselect('Select allowed professions', professions, professions,
+        profession_list = list(professions.keys())
+        allowed_professions = set(col1.multiselect('Select allowed professions', profession_list, profession_list,
                                                    on_change=reset_button))
 
         # make a number input how much cooldown any spell can have
@@ -496,20 +503,20 @@ def crafter_page():
         reference_list = root.get_reference_list()
 
         # get the prices for the reference list
-        recent_prices = pf.get_most_recent_item_price()
+        recent_prices = daint.get_most_recent_item_price()
         recent_prices = collections.defaultdict(lambda: float('inf'), recent_prices)
 
         # make dfs through the item tree
         def dfs(node):
             # we reached a leaf
             if len(node.children) == 0:
-                assert isinstance(node, rcd.ItemNode), 'Something is off.'
+                assert isinstance(node, rgdb.ItemNode), 'Something is off.'
 
                 # every dfs returns the current price, the current items that are necessary and the path it took
                 return recent_prices[node.id]*node.required_amount, [(node.id, node.required_amount)], [node]
 
             # if we are a spell node, we need to sum the items we use
-            if isinstance(node, rcd.SpellNode):
+            if isinstance(node, rgdb.SpellNode):
                 # get all the items we need
                 curr_price = [dfs(child) for child in node.children.values()]
 
@@ -530,7 +537,7 @@ def crafter_page():
                 curr_price = (tmp_price, list(item_dict.items()), tmp_path)
 
             # if we are an item node, we need to find the cheapest option
-            elif isinstance(node, rcd.ItemNode):
+            elif isinstance(node, rgdb.ItemNode):
 
                 # check the options to craft the item
                 curr_price = min((dfs(child) for child in node.children.values()), key=lambda x: x[0])
@@ -548,8 +555,8 @@ def crafter_page():
 
         # go through the nodes that are in the path and mark them
         if cheap_price != float('inf'):
-            for node in best_path:
-                node.mark()
+            for __node in best_path:
+                __node.mark()
 
         # a checkbox to show a graph
         show_craft_graph = st.checkbox('Show Craft Graph (might consume large memory in your browser).', False,
@@ -565,8 +572,9 @@ def crafter_page():
             st.warning(f'We did not have a price for any valid path for {root.id}', icon="⚠️")
         else:
             st.write('Best crafting path:')
-            st.markdown(pf.price2gold(cheap_price) + "-".join(f'[{items[ele][0]}]({linked}) ({number})'
-                                                              for (ele, number), linked in zip(cheap_combo, link_list)))
+            st.markdown(daint.price2gold(cheap_price) +
+                        "-".join(f'[{items[ele][0]}]({linked}) ({number})'
+                                 for (ele, number), linked in zip(cheap_combo, link_list)))
         logger.info(f'Searching the graph for item {root.id} (name={items.get(root.id, ("NOT FOUND", ""))[0]}) '
                     f'took {time.perf_counter() - __ts:0.4f}s.')
     return reference_list
@@ -602,7 +610,7 @@ def extend_item():
         return
 
     # request name from the db
-    item = rcd.ItemNode(curr_item)
+    item = rgdb.ItemNode(curr_item)
     st.markdown(f'Found: [{items[curr_item][0]}]({item.url}) (german name: [{items[curr_item][1]}]({item.url}))')
     st.divider()
     # get the name from the database
@@ -616,7 +624,7 @@ def extend_item():
         updater = st.button('Update')
         if updater:
             # update the database
-            pf.update_db_item_name_de(item.id, item_name)
+            daint.update_db_item_name_de(item.id, item_name)
             st.write('✅')
 
             # invalidate the items cache
@@ -632,7 +640,7 @@ def extend_spell():
     spells, _ = cached_get_spells()
 
     # create the corresponding item
-    spell = rcd.SpellNode(curr_spell)
+    spell = rgdb.SpellNode(curr_spell)
 
     # search the item in our database
     if curr_spell not in spells:
@@ -656,8 +664,8 @@ def extend_spell():
         if updater:
 
             # update the database
-            pf.insert_db_spell_name(spell.id, spell_name, spell_name_en,
-                                    profession_name, profession_name_en, cooldown, skill_level)
+            daint.insert_db_spell_name(spell.id, spell_name, spell_name_en,
+                                       profession_name, profession_name_en, cooldown, skill_level)
             st.write('✅')
 
             # invalidate the spells cache
@@ -666,12 +674,12 @@ def extend_spell():
         st.markdown(f'We did not find spell: [{spell.id}]({spell.url}).')
 
 
-def update_spells_from_reference_list(reference_list: dict[int: list[rcd.BaseNode]], sleep_time: float = 0.4):
+def update_spells_from_reference_list(reference_list: dict[int: list[rgdb.BaseNode]], sleep_time: float = 0.4):
 
     # check for unknown spells
     spells, _ = cached_get_spells()
-    unknown_spells = [rcd.SpellNode(spell_id) for spell_id, node_list in reference_list.items()
-                      if node_list and isinstance(node_list[0], rcd.SpellNode) and spell_id not in spells]
+    unknown_spells = [rgdb.SpellNode(spell_id) for spell_id, node_list in reference_list.items()
+                      if node_list and isinstance(node_list[0], rgdb.SpellNode) and spell_id not in spells]
 
     # check whether there are unknown spells
     if not unknown_spells:
@@ -687,20 +695,20 @@ def update_spells_from_reference_list(reference_list: dict[int: list[rcd.BaseNod
             spell_name, profession_name, cooldown, skill_level = cache_request_name(spell, language='de')
             spell_name_en, profession_name_en, _, _ = cache_request_name(spell, language='en')
             if spell_name and spell_name_en:
-                pf.insert_db_spell_name(spell.id, spell_name, spell_name_en,
-                                        profession_name, profession_name_en, cooldown, skill_level)
+                daint.insert_db_spell_name(spell.id, spell_name, spell_name_en,
+                                           profession_name, profession_name_en, cooldown, skill_level)
             time.sleep(sleep_time)
 
     # invalidate the cache
     cached_get_spells.clear()
 
 
-def update_items_from_reference_list(reference_list: dict[int: list[rcd.BaseNode]], sleep_time: float = 0.4):
+def update_items_from_reference_list(reference_list: dict[int: list[rgdb.BaseNode]], sleep_time: float = 0.4):
 
     # check for unknown spells
     items = cached_get_items()
-    unknown_items = [rcd.ItemNode(item_id) for item_id, node_list in reference_list.items()
-                     if node_list and isinstance(node_list[0], rcd.ItemNode) and not items[item_id][1]]
+    unknown_items = [rgdb.ItemNode(item_id) for item_id, node_list in reference_list.items()
+                     if node_list and isinstance(node_list[0], rgdb.ItemNode) and not items[item_id][1]]
 
     # check whether there are unknown items
     if not unknown_items:
@@ -719,7 +727,7 @@ def update_items_from_reference_list(reference_list: dict[int: list[rcd.BaseNode
             time.sleep(sleep_time)
 
             # update the database
-            pf.update_db_item_name_de(item.id, item_name)
+            daint.update_db_item_name_de(item.id, item_name)
 
     # invalidate the items cache
     cached_get_items.clear()

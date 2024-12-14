@@ -1,16 +1,17 @@
 import collections
+
 from streamlit_flow import streamlit_flow
 from streamlit_flow.elements import StreamlitFlowNode, StreamlitFlowEdge
 from streamlit_flow.state import StreamlitFlowState
 from streamlit_flow.layouts import TreeLayout
 
-import requestCraftDB as rcd
-import parseFile as pf
+import rg_database_interactions as rgdb
+import database_interactions as daint
 
 
-def create_content_str(item: rcd.BaseNode, recent_prices: collections.defaultdict[int: [int | float]],
+def create_content_str(item: rgdb.BaseNode, recent_prices: collections.defaultdict[int: [int | float]],
                        spells: dict[int: (str, str, int, str, str)]):
-    if isinstance(item, rcd.ItemNode):
+    if isinstance(item, rgdb.ItemNode):
         price = recent_prices[item.id]
         content_str = f"""
 Item {item.name}
@@ -18,7 +19,7 @@ Item {item.name}
 Id: {item.id}
 Amount: ({item.required_amount})
 
-Price: {"?" if price == float("inf") else pf.price2gold(price*item.required_amount)}
+Price: {"?" if price == float("inf") else daint.price2gold(price*item.required_amount)}
 """
     else:
         _, name, cooldown, profession_name, skill = spells.get(item.id, ("", "", 0, "", 0))
@@ -34,7 +35,7 @@ Id: {item.id}
     return content_str
 
 
-def create_flow(root: rcd.ItemNode, recent_prices: collections.defaultdict[int: [int | float]],
+def create_flow(root: rgdb.ItemNode, recent_prices: collections.defaultdict[int: [int | float]],
                 spells: dict[int: (str, str, int, str, str)]):
     # spells has the following format:
     # spell.name_en, spell.name_de, spell.cooldown, spell.profession_name, spell.skill

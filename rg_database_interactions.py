@@ -3,12 +3,12 @@
 # https://db.rising-gods.de/?spells for spells
 import requests
 import re
-from bs4 import BeautifulSoup
 import sys
 import logging
 import time
 import collections
-# TODO: Integrate spell database, spell updater and with that spell names
+
+from bs4 import BeautifulSoup
 
 
 class BaseNode:
@@ -279,7 +279,7 @@ def request_name(item: BaseNode, language: str = 'de'):
             assert len(lines) == 1, 'Could not find spell specification.'
             lines = re.findall(r'\[color=r\d+]\d+\[/color]', lines[0])
             if len(lines) >= 1:
-                lines = re.findall("]\d+\[", lines[0])
+                lines = re.findall(r"]\d+\[", lines[0])
                 skill_level = int(lines[0][1:-1])
 
             # get the cooldown if there is
@@ -308,11 +308,24 @@ def request_name(item: BaseNode, language: str = 'de'):
         return None, None, None, None
 
 
-if __name__ == '__main__':
-    # create_item_craft_graph(49906)
+def test():
+
+    # get some names for spells and items
     request_name(ItemNode(22854))
     request_name(SpellNode(66658))
     request_name(SpellNode(28589))
     request_name(SpellNode(54222))
     request_name(SpellNode(53812))
     request_name(SpellNode(60893))
+
+    # request not existing item
+    request_name(SpellNode(0))
+    request_name(ItemNode(0))
+
+    # get a craft graph
+    create_item_craft_graph(29520)
+    create_item_craft_graph(49906)
+
+
+if __name__ == '__main__':
+    test()
