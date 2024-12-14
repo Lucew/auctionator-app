@@ -427,7 +427,7 @@ def crafter_page():
 
         # make a multiselect for the allowed profession
         profession_list = list(set(spells[spell.id][3] for spell in root.dfs(target_class=rgdb.SpellNode)
-                                   if spells[spell.id][3]))
+                                   if spell.id in spells and spells[spell.id][3]))
         allowed_professions = set(col1.multiselect('Select allowed professions', profession_list, profession_list,
                                                    on_change=reset_button))
 
