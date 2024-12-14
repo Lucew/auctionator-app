@@ -62,8 +62,15 @@ def get_item_prices():
         # write the prices in to a dict
         prices_dict = collections.defaultdict(list)
         for group in grouped_prices:
-            prices_dict[(group[1].item_id, group[1].name_de, group[1].name)].append(
-                (group[0].unix_timestamp, group[0].price/group[0].stacks))
+
+            # check whether we have german name, otherwise take the englisch one
+            name_de = group[1].name_de if group[1].name_de else group[1].name
+
+            # create the key into the dict
+            dict_key = (group[1].item_id, name_de, group[1].name)
+
+            # write the data
+            prices_dict[dict_key].append((group[0].unix_timestamp, group[0].price/group[0].stacks))
 
     logger = logging.getLogger('auctionator')
     logger.info(f'Querying the DB for prices took {time.perf_counter() - __ts: 0.2f}s')
@@ -216,10 +223,9 @@ def db2df(history_dict: dict[tuple[int, str]: list[tuple[int, float]]]):
     # create a dataframe for plotting
     df_dict = {'Name': [], 'Name (en)': [], 'Price': [], 'Date': [], 'Gold': [], 'Id': []}
     name2link = dict()
-    for ((idd, name, name_de), sorted_prices) in history_dict.items():
-        name_de = name_de if name_de else name
-        df_dict['Name (en)'].extend(name for _ in range(len(sorted_prices)))
+    for ((idd, name_de, name), sorted_prices) in history_dict.items():
         df_dict['Name'].extend(name_de for _ in range(len(sorted_prices)))
+        df_dict['Name (en)'].extend(name for _ in range(len(sorted_prices)))
         df_dict['Price'].extend(price for _, price in sorted_prices)
         df_dict['Date'].extend(date for date, _ in sorted_prices)
         df_dict['Gold'].extend(price2gold(price) for _, price in sorted_prices)
