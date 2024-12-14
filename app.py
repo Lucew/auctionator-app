@@ -184,7 +184,7 @@ def side_bar():
             logger.info('File is parsed and cache invalidated.')
 
     # make a dataframe out of the items
-    cl_config = {"_index": st.column_config.NumberColumn(format="%d")}
+    cl_config = {"_index": st.column_config.NumberColumn("Id", format="%d")}
     st.sidebar.header('Item Finder')
     search = st.sidebar.text_input("Search for items")
     df = cached_get_items_df()
