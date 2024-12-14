@@ -9,7 +9,6 @@ import os
 import streamlit as st
 import altair as alt
 import pandas as pd
-import urllib.parse
 
 import rg_database_interactions as rgdb
 import database_interactions as daint
@@ -19,10 +18,14 @@ import streamlit_utils as stut
 
 # make a cached function to get the data stuff
 @st.cache_data
-def get_dataframe():
+def cached_get_price_info():
+    __ts = time.perf_counter()
 
     # get the dataframe and name2link converter
-    df, name2link = daint.db2df(daint.get_item_prices())
+    df = daint.db2df(daint.get_item_prices())
+
+    # get the names of all items we have prices for
+    names = list(df['Name'].unique())
 
     # create an overview per item with all prices and turn prices per item into array
     grouped_df = df.groupby(['Name', 'Id'])
@@ -30,13 +33,48 @@ def get_dataframe():
         grouped_df['Price'].apply(lambda x: [ele for ele in x.values]).to_frame('Prices'))
 
     # delete Id from the index
-    grouped_df = grouped_df.reset_index(level=("Id",))
-    return df, name2link, grouped_df
+    grouped_df = grouped_df.reset_index(level=("Id", ))
+
+    old_version = """
+    style_format = dict()
+    for name in grouped_df.columns[1:-1]:
+        style_format[name] = daint.price2gold
+    style_format['count'] = int
+
+    # make a styled group dataframe, where we replace all the integers with strings so it is easier to read
+    styled_grouped_df = grouped_df.copy().style.format(style_format).format_index(urllib.parse.unquote, axis=1)
+    """
+
+    # make another dataframe, where the item prices become human friendly strings
+    styled_grouped_df = grouped_df.copy()
+
+    # create the links and put them into the index
+    styled_grouped_df.index = [daint.name2dblink(idd, name) for idd, name in
+                               zip(styled_grouped_df['Id'], styled_grouped_df.index)]
+    # create the gold string instead of the integers
+    for column in styled_grouped_df.columns[2:-1]:
+        styled_grouped_df[column] = styled_grouped_df[column].apply(daint.price2gold)
+
+    # log the time it took to create the cache
+    logger = logging.getLogger('auctionator')
+    logger.info(f"Creating the price dataframe (requesting, grouping, and caching) took {time.perf_counter()-__ts} s.")
+    return df, names, grouped_df, styled_grouped_df
 
 
 @st.cache_data
 def cached_get_items():
     return daint.get_items()
+
+
+@st.cache_data
+def cached_get_items_df():
+
+    # get the items dict from cache
+    items_dict = cached_get_items()
+
+    # make a dataframe
+    df = pd.DataFrame.from_dict(items_dict, orient='index', columns=["Name (en)", "Name (de)"])
+    return df
 
 
 @st.cache_resource
@@ -61,7 +99,7 @@ def convert_df(df, typed: str):
 
 # cache some of the crafting data
 @st.cache_data(max_entries=100)
-def cache_crafting_recipe(item_id: int):
+def cached_crafting_recipe(item_id: int):
     return rgdb.create_item_craft_graph(item_id)
 
 
@@ -142,17 +180,15 @@ def side_bar():
         # clean the function cache
         if success_val:
             # https://stackoverflow.com/a/77676594
-            get_dataframe.clear()
+            cached_get_price_info.clear()
             logger.info('File is parsed and cache invalidated.')
 
-    # find items by name
-    items = cached_get_items()
-    item2id = {item_name: item_id for item_id, names in items.items() for item_name in names}
+    # make a dataframe out of the items
     st.sidebar.header('Item Finder')
-    item_name = st.sidebar.multiselect('Item ID finder', list(item2id.keys()), max_selections=1)
-    if item_name:
-        item_name = item_name[0]
-        st.sidebar.write(f'{item_name}: {item2id[item_name]}')
+    search = st.sidebar.text_input("Search for items")
+    df = cached_get_items_df()
+    st.sidebar.dataframe(df[(df["Name (en)"].str.contains(search)) | (df["Name (de)"].str.contains(search))],
+                         height=100, use_container_width=True)
 
     # make a button to invalidate the cache
     st.sidebar.header('Page Settings')
@@ -183,8 +219,7 @@ def analyzer_page():
              ' You can download all collected data on the left. This is a private project. Please use with caution!')
 
     # get the dataframe
-    df, name2link, grouped_df = get_dataframe()
-    names = list(df['Name'].unique())
+    df, names, grouped_df, styled_grouped_df = cached_get_price_info()
 
     # get the selection
     selection = item_selector(names)
@@ -217,32 +252,27 @@ def analyzer_page():
 
     # style the dataframe
     cl_config = {"Prices": st.column_config.LineChartColumn("Prices"),
-                 "_index": st.column_config.LinkColumn('Name', display_text=r"[?&]name=([^&#]+)$")}
-    style_format = dict()
-    for name in grouped_df.columns[1:-1]:
-        style_format[name] = daint.price2gold
-    style_format['count'] = int
+                 "_index": st.column_config.LinkColumn('Name', display_text=r"[?&]name=([^&#]+)$"),
+                 "Id": st.column_config.NumberColumn(format="%d"),
+                 "Count": st.column_config.NumberColumn(format="%d")}
 
     # make a checkbox whether to apply selection
     apply_selection = st.checkbox('Apply Selection', value=False)
 
     # display the dataframe
     if apply_selection:
-        display_df = grouped_df.loc[list(selection)]
+        display_df = styled_grouped_df.loc[list(selection)]
     else:
-        display_df = grouped_df
+        display_df = styled_grouped_df
 
     # apply some filters
     display_df = stut.filter_dataframe(display_df)
 
-    # replace the index names with link indices
-    display_df.index = list(map(name2link.get, display_df.index))
-
     # visualize the dataframe
     st.write(f'Description of Price Distribution for {"the selected" if apply_selection else "all"}'
              f' Items (click columns to sort):')
-    st.dataframe(display_df.style.format(style_format).format_index(urllib.parse.unquote, axis=1),
-                 column_config=cl_config, use_container_width=True)
+    st.dataframe(display_df, column_config=cl_config,
+                 use_container_width=True)
 
     # make a sidebar
     with st.sidebar:
@@ -376,7 +406,7 @@ def crafter_page():
     with st.spinner('Wait for it...'):
 
         # get the recipe from the database (4096 is a problem)
-        root = cache_crafting_recipe(selection)
+        root = cached_crafting_recipe(selection)
 
         # prune the graph
         prune_graph(root, allowed_professions, maximum_cooldown, profession_skill)

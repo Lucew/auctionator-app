@@ -222,18 +222,16 @@ def price2gold(price: float):
 def db2df(history_dict: dict[tuple[int, str]: list[tuple[int, float]]]):
     # create a dataframe for plotting
     df_dict = {'Name': [], 'Name (en)': [], 'Price': [], 'Date': [], 'Gold': [], 'Id': []}
-    name2link = dict()
     for ((idd, name_de, name), sorted_prices) in history_dict.items():
         df_dict['Name'].extend(name_de for _ in range(len(sorted_prices)))
         df_dict['Name (en)'].extend(name for _ in range(len(sorted_prices)))
         df_dict['Price'].extend(price for _, price in sorted_prices)
         df_dict['Date'].extend(date for date, _ in sorted_prices)
         df_dict['Gold'].extend(price2gold(price) for _, price in sorted_prices)
-        df_dict['Id'].extend(idd for _ in range(len(sorted_prices)))
-        name2link[name_de] = name2dblink(idd, name_de)
+        df_dict['Id'].extend(int(idd) for _ in range(len(sorted_prices)))
     df = pd.DataFrame(df_dict)
     df['Date'] = pd.to_datetime(df['Date'], unit='s')
-    return df, name2link
+    return df
 
 
 def name2dblink(item_id: int, name: str):
