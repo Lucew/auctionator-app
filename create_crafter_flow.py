@@ -1,9 +1,8 @@
 import collections
 
-from streamlit_flow import streamlit_flow
 from streamlit_flow.elements import StreamlitFlowNode, StreamlitFlowEdge
 from streamlit_flow.state import StreamlitFlowState
-from streamlit_flow.layouts import TreeLayout
+import streamlit as st
 
 import rg_database_interactions as rgdb
 import database_interactions as daint
@@ -49,6 +48,7 @@ def create_flow(root: rgdb.ItemNode, recent_prices: collections.defaultdict[int:
     nodes = [flow_node]
     edges = []
     level = 1
+    graph_ids = {flow_node.id}
     while layer:
 
         # go through the stack which corresponds to the current layer
@@ -73,11 +73,19 @@ def create_flow(root: rgdb.ItemNode, recent_prices: collections.defaultdict[int:
                 # append the child to the new level
                 children.append((child, flow_node))
 
+                # put the graph elements into the dict
+                graph_ids.add(flow_node.id)
+
         # update the level
         level += 1
         layer = children
-
     state = StreamlitFlowState(nodes, edges)
+    return state, graph_ids
 
-    streamlit_flow('static_flow', state, show_controls=False, fit_view=True, show_minimap=True,
-                   hide_watermark=True, layout=TreeLayout(direction='right'))
+
+def delete_nodes(node_ids: set[str]):
+    print([node.id for node in st.session_state.curr_state.nodes])
+    st.session_state.curr_state.nodes = [node for node in st.session_state.curr_state.nodes if node.id in node_ids]
+    st.session_state.curr_state.edges = [edge for edge in st.session_state.curr_state.edges if edge.source in node_ids
+                        and edge.target in node_ids]
+    print([node.id for node in st.session_state.curr_state.nodes])

@@ -101,13 +101,45 @@ class BaseNode:
         return buffer
 
     def __hash__(self):
-        return self.url
+        return hash(self.url + ("None" if self.is_root() else str(self.parent.url)))
 
     def mark(self):
         self.marked = True
 
     def unmark(self):
         self.marked = False
+
+    def dfs(self, start_root: bool = True, target_class: 'BaseNode' = None):
+
+        # make default value
+        if target_class is None:
+            target_class = self.__class__
+
+        # go up to the root node of the current graph
+        if start_root:
+            curr = self
+            while curr.parent:
+                curr = curr.parent
+            root = curr
+        else:
+            root = self
+
+        # make stack dfs and create the reference list
+        stack = [root]
+        while stack:
+
+            # get the children
+            curr = stack.pop()
+
+            # check whether we want to check this type of node
+            if isinstance(curr, target_class):
+                yield curr
+
+            # update the stack
+            stack.extend(curr.children.values())
+
+    def is_root(self):
+        return self.parent is None
 
 
 class SpellNode(BaseNode):

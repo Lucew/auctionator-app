@@ -9,6 +9,7 @@ import os
 import streamlit as st
 import altair as alt
 import pandas as pd
+import streamlit_flow as stflow
 
 import rg_database_interactions as rgdb
 import database_interactions as daint
@@ -316,17 +317,19 @@ def analyzer_page():
 
 
 def prune_graph(graph: rgdb.BaseNode, allowed_professions: set[str], maximum_cooldown: int,
-                skill_per_profession: dict[str:int]):
+                skill_per_profession: dict[str:int], excluded_items: set[int], excluded_spells: set[int],
+                excluded_strings: set[str]):
 
     # get the spells
     spells, _ = cached_get_spells()
 
     # check that we got a root
-    assert graph.parent is None, 'Can only prune from root.'
+    assert graph.is_root(), 'Can only prune from root.'
     assert isinstance(graph, rgdb.ItemNode), 'Root is a spell.'
 
     # go through the nodes and make the checks
     stack = [graph]
+    deleted_children = []
     while stack:
 
         # get the current node
@@ -339,8 +342,29 @@ def prune_graph(graph: rgdb.BaseNode, allowed_professions: set[str], maximum_coo
             # get the child
             child = node.children[child_key]
 
-            # check whether it is a spell and we have information
-            if isinstance(child, rgdb.ItemNode) or child.id not in spells:
+            # check for the names
+            if child.name and child.name in excluded_strings:
+                deleted_children.append(child)
+                del node.children[child_key]
+                continue
+
+            # check if it is an item
+            if isinstance(child, rgdb.ItemNode):
+                if child.id in excluded_items:
+                    deleted_children.append(child)
+                    del node.children[child_key]
+                else:
+                    stack.append(node.children[child_key])
+                continue
+
+            # check whether the spell is allowed
+            if child.id in excluded_spells:
+                deleted_children.append(child)
+                del node.children[child_key]
+                continue
+
+            # guard clause to check whether we have information about the spell
+            if child.id not in spells:
                 stack.append(child)
                 continue
 
@@ -350,13 +374,16 @@ def prune_graph(graph: rgdb.BaseNode, allowed_professions: set[str], maximum_coo
             if profession_name not in allowed_professions or cooldown > maximum_cooldown or \
                     skill > skill_per_profession[profession_name]:
                 # we need to prune this child
+                deleted_children.append(child)
                 del node.children[child_key]
             else:
                 stack.append(node.children[child_key])
 
+    return deleted_children
+
 
 def reset_button():
-    st.session_state['graph-button'] = False
+    st.session_state['Show-Graph-Button'] = False
 
 
 def crafter_page():
@@ -371,7 +398,7 @@ def crafter_page():
 
     # get the item selection
     selection = st.number_input('Input the id of the item you want to craft (e.g., 49906)', 0, max(items.keys()), 49906,
-                                on_change=reset_button)
+                                )
 
     # Write the item
     if selection not in items:
@@ -383,6 +410,15 @@ def crafter_page():
     item = rgdb.ItemNode(selection)
     st.markdown(f"[{items[selection][0]}]({item.url})")
 
+    # request the rising gods database for the crafting graph
+    with st.spinner('Requesting Craft Graph...'):
+
+        # get the recipe from the database (4096 is a problem)
+        root = cached_crafting_recipe(selection)
+
+        # set the names of the spells
+        root.set_names(spells, items, return_when_name=True)
+
     # make the configuration (and reset the graph button along the way
     with st.expander("Configuration"):
 
@@ -390,12 +426,10 @@ def crafter_page():
         col1, col2 = st.columns(2)
 
         # make a multiselect for the allowed profession
-        profession_list = list(professions.keys())
+        profession_list = list(set(spells[spell.id][3] for spell in root.dfs(target_class=rgdb.SpellNode)
+                                   if spells[spell.id][3]))
         allowed_professions = set(col1.multiselect('Select allowed professions', profession_list, profession_list,
                                                    on_change=reset_button))
-
-        # make a number input how much cooldown any spell can have
-        maximum_cooldown = col2.number_input('Maximum cooldown (s)', 0, 1_000_000, 100_000, on_change=reset_button)
 
         # create a number input for the profession level
         profession_skill = dict()
@@ -403,17 +437,27 @@ def crafter_page():
             profession_skill[profession] = col1.number_input(f'{profession} - Maximum Skill', 0, 450, 450,
                                                              on_change=reset_button)
 
-    # request the rising gods database for the crafting graph
-    with st.spinner('Wait for it...'):
+        # make a number input how much cooldown any spell can have
+        maximum_cooldown = col2.number_input('Maximum cooldown (s)', 0, 1_000_000, 100_000, on_change=reset_button)
 
-        # get the recipe from the database (4096 is a problem)
-        root = cached_crafting_recipe(selection)
+        # create a multiselect excluded spells
+        options = set(spell.id for spell in root.dfs(target_class=rgdb.SpellNode))
+        excluded_spells = set(col2.multiselect('Exclude Spells', options, on_change=reset_button))
+
+        # create a multiselect for excluded items
+        options = set(item.id for item in root.dfs(target_class=rgdb.ItemNode) if not item.is_root())
+        excluded_items = set(col2.multiselect('Exclude Items', options, on_change=reset_button))
+
+        # create a string for excluded items
+        options = set(spell.name for spell in root.dfs(target_class=rgdb.SpellNode) if spell.name)
+        excluded_strings = set(col2.multiselect('Exclude Names', options, on_change=reset_button))
+
+    # request the rising gods database for the crafting graph
+    with st.spinner('Creating the Graph...'):
 
         # prune the graph
-        prune_graph(root, allowed_professions, maximum_cooldown, profession_skill)
-
-        # set the names of the spells
-        root.set_names(spells, items, return_when_name=True)
+        deleted_children = prune_graph(root, allowed_professions, maximum_cooldown, profession_skill, excluded_items,
+                                       excluded_spells, excluded_strings)
 
         # get the reference list
         reference_list = root.get_reference_list()
@@ -474,13 +518,13 @@ def crafter_page():
             for __node in best_path:
                 __node.mark()
 
-        # a checkbox to show a graph
-        show_craft_graph = st.checkbox('Show Craft Graph (might consume large memory in your browser).', False,
-                                       key='graph-button')
-
-        # make the craft flow
-        if show_craft_graph:
-            ccf.create_flow(root, recent_prices, spells)
+        # print the flow to the page
+        if st.toggle("Show the graph", key='Show-Graph-Button'):
+            state, _ = ccf.create_flow(root, recent_prices, spells)
+            st.session_state.curr_state = stflow.streamlit_flow('static_flow', state,
+                                                                show_controls=False, fit_view=True,
+                                                                show_minimap=True, hide_watermark=True,
+                                                                layout=stflow.layouts.TreeLayout(direction='right'))
 
         # write out all the option
         link_list = [f"{root.base_url}/?item={ele}" for ele, _ in cheap_combo]
@@ -603,7 +647,7 @@ def update_spells_from_reference_list(reference_list: dict[int: list[rgdb.BaseNo
 
     # create a button to update all spells
     st.write(f'Updating will take ~{int(len(unknown_spells)*(sleep_time+0.1)+1)}s')
-    update_all_spells = st.button('Update Spells.', on_click=reset_button)
+    update_all_spells = st.button('Update Spells.', on_change=reset_flow_graph)
     if not update_all_spells:
         return
     with st.spinner('Updating spell names...'):
@@ -632,7 +676,7 @@ def update_items_from_reference_list(reference_list: dict[int: list[rgdb.BaseNod
 
     # create a button to update all spells
     st.write(f'Updating will take ~{int(len(unknown_items)*(sleep_time+0.1)+1)}s')
-    update_all_spells = st.button('Update Items.', on_click=reset_button)
+    update_all_spells = st.button('Update Items.', on_change=reset_flow_graph)
     if not update_all_spells:
         return
     with st.spinner('Updating item names...'):
