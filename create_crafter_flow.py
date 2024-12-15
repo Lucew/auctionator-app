@@ -87,5 +87,5 @@ def delete_nodes(node_ids: set[str]):
     print([node.id for node in st.session_state.curr_state.nodes])
     st.session_state.curr_state.nodes = [node for node in st.session_state.curr_state.nodes if node.id in node_ids]
     st.session_state.curr_state.edges = [edge for edge in st.session_state.curr_state.edges if edge.source in node_ids
-                        and edge.target in node_ids]
+                                         and edge.target in node_ids]
     print([node.id for node in st.session_state.curr_state.nodes])

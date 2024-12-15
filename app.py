@@ -131,7 +131,7 @@ def item_selector(names: list[str], multiselect: bool = True):
 
             # make the multiselect and keep the session state
             default_vals = st.session_state.get("multi_select_items", names[:1])
-            default_vals.extend(regular_matched_items)
+            default_vals = list(set(default_vals) | set(regular_matched_items))
             selection = set(st.multiselect('Choose the items of interest', options=names, default=default_vals,
                                            key="multi_select_items"), )
     else:
@@ -398,7 +398,7 @@ def crafter_page():
 
     # get the item selection
     selection = st.number_input('Input the id of the item you want to craft (e.g., 49906)', 0, max(items.keys()), 49906,
-                                )
+                                on_change=reset_button)
 
     # Write the item
     if selection not in items:
@@ -448,9 +448,22 @@ def crafter_page():
         options = set(item.id for item in root.dfs(target_class=rgdb.ItemNode) if not item.is_root())
         excluded_items = set(col2.multiselect('Exclude Items', options, on_change=reset_button))
 
-        # create a string for excluded items
+        # make a regular expression matching
+        regular_expression = col2.text_input('Input (regular) filter expressions for names.', on_change=reset_button)
         options = set(spell.name for spell in root.dfs(target_class=rgdb.SpellNode) if spell.name)
-        excluded_strings = set(col2.multiselect('Exclude Names', options, on_change=reset_button))
+        regular_matched_items = []
+        if regular_expression:
+            try:
+                regular_expression = re.compile(regular_expression)
+                regular_matched_items = list(filter(lambda x: bool(regular_expression.findall(x)), list(options)))
+            except re.error as e:
+                st.warning(f'Regex Pattern was not valid: {str(e)}', icon="⚠️")
+
+        # create a string for excluded items
+        default_vals = st.session_state.get('crafter_multi_exclude', [])
+        default_vals = list(set(default_vals) | set(regular_matched_items))
+        excluded_strings = set(col2.multiselect('Exclude Names', options, key='crafter_multi_exclude',
+                                                default=default_vals, on_change=reset_button))
 
     # request the rising gods database for the crafting graph
     with st.spinner('Creating the Graph...'):
