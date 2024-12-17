@@ -1,6 +1,6 @@
 #!/bin/bash
-# chmod +x update_db_and_restart.sh
-# ./update_db_and_restart.sh
+# chmod +x save_db_update_files.sh
+# ./save_db_update_files.sh
 # Script to update auctionator.db, restore with git, pull changes, and restart docker-compose
 
 # Exit immediately if a command exits with a non-zero status
