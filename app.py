@@ -52,8 +52,13 @@ def cached_get_price_info():
     # create the links and put them into the index
     styled_grouped_df['Name'] = [daint.name2dblink(idd, name) for idd, name in
                                  zip(styled_grouped_df['Id'], styled_grouped_df.index)]
+
+    # reorder the columns so the name is at first
+    column_names = list(styled_grouped_df)
+    styled_grouped_df = styled_grouped_df[column_names[-1:] + column_names[:-1]]
+
     # create the gold string instead of the integers
-    for column in styled_grouped_df.columns[2:-2]:
+    for column in styled_grouped_df.columns[3:-1]:
         styled_grouped_df[column] = styled_grouped_df[column].apply(daint.price2gold)
 
     # log the time it took to create the cache
