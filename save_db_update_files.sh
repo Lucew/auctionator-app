@@ -24,7 +24,7 @@ mv asd.db auctionator.db
 
 # Step 5: Restart docker-compose in detached mode
 echo "Restarting docker-compose in detached mode..."
-docker-compose down
-docker-compose up -d
+docker compose down
+docker compose up -d
 
 echo "Script completed successfully!"
