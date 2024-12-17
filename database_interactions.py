@@ -70,7 +70,7 @@ def get_item_prices():
             dict_key = (group[1].item_id, name_de, group[1].name)
 
             # write the data
-            prices_dict[dict_key].append((group[0].unix_timestamp, group[0].price/group[0].stacks))
+            prices_dict[dict_key].append((group[0].unix_timestamp, group[0].price))
 
     logger = logging.getLogger('auctionator')
     logger.info(f'Querying the DB for prices took {time.perf_counter() - __ts: 0.2f}s')
@@ -293,6 +293,8 @@ def clean_item_database():
 
         # delete the spell names table
         # session.execute(sqlalchemy.text('DROP TABLE spell_names'))
+        # delete the prices
+        # session.execute(sqlalchemy.text('DROP TABLE prices'))
     session.commit()
 
 

@@ -50,10 +50,10 @@ def cached_get_price_info():
     styled_grouped_df = grouped_df.copy()
 
     # create the links and put them into the index
-    styled_grouped_df.index = [daint.name2dblink(idd, name) for idd, name in
-                               zip(styled_grouped_df['Id'], styled_grouped_df.index)]
+    styled_grouped_df['Name'] = [daint.name2dblink(idd, name) for idd, name in
+                                 zip(styled_grouped_df['Id'], styled_grouped_df.index)]
     # create the gold string instead of the integers
-    for column in styled_grouped_df.columns[2:-1]:
+    for column in styled_grouped_df.columns[2:-2]:
         styled_grouped_df[column] = styled_grouped_df[column].apply(daint.price2gold)
 
     # log the time it took to create the cache
@@ -254,7 +254,7 @@ def analyzer_page():
 
     # style the dataframe
     cl_config = {"Prices": st.column_config.LineChartColumn("Prices"),
-                 "_index": st.column_config.LinkColumn('Name', display_text=r"[?&]name=([^&#]+)$"),
+                 "Name": st.column_config.LinkColumn('Name', display_text=r"[?&]name=([^&#]+)$"),
                  "Id": st.column_config.NumberColumn(format="%d"),
                  "Count": st.column_config.NumberColumn(format="%d")}
 
@@ -273,8 +273,7 @@ def analyzer_page():
     # visualize the dataframe
     st.write(f'Description of Price Distribution for {"the selected" if apply_selection else "all"}'
              f' Items (click columns to sort):')
-    st.dataframe(display_df, column_config=cl_config,
-                 use_container_width=True)
+    st.dataframe(display_df, column_config=cl_config, hide_index=True, use_container_width=True)
 
     # make a sidebar
     with st.sidebar:
