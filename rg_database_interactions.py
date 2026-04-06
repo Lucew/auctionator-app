@@ -26,6 +26,34 @@ class BaseNode:
         self.children: dict[int: 'BaseNode'] = dict()
         self.name = name
 
+    def end_str(self, de: bool = False) -> str:
+        """
+        Generate the end string of the title of an item
+
+        :param de: Whether german or english
+        :return: the end string
+        """
+        database_str = 'Rising Gods - WotLK Database' if self.base_url.endswith('db.rising-gods.de') else 'WotLK Database 3.3.5a'
+        page_name = self.item_name(de)
+        if de:
+            return f' - {page_name} - {database_str}'
+        else:
+            return f' - {page_name} - {database_str}'
+
+    def item_name(self, de: bool = False) -> str:
+        if isinstance(self, ItemNode):
+            return "Gegenstand" if de else "Item"
+        elif isinstance(self, SpellNode):
+            return "Zauber" if de else "Spell"
+        elif isinstance(self, SkillNode):
+            return "Fertigkeit" if de else "Skill"
+        else:
+            raise NotImplementedError
+
+    def craft_path_identifier(self) -> str:
+        identifier = 'new Listview({"id":"created-by"' if self.base_url.endswith('db.rising-gods.de') else 'new Listview({"template":"spell","id":"created-by"'
+        return identifier
+
     @property
     def url(self):
         return f"{self.base_url}?{self.query_parameter}={self.id}"
@@ -157,6 +185,13 @@ class ItemNode(BaseNode):
         super().__init__(item_id, required_amount, parent)
 
 
+class SkillNode(BaseNode):
+    query_parameter: str = "skill"
+
+    def __init__(self, item_id: int, required_amount: int = 1, parent: [BaseNode | None] = None):
+        super().__init__(item_id, required_amount, parent)
+
+
 def create_item_craft_graph(item_id: int):
     # ressources id: 49906
 
@@ -172,7 +207,7 @@ def create_item_craft_graph(item_id: int):
     request_count = 1
 
     # get the spells that belong to the item
-    line_identifier = 'new Listview({"id":"created-by"'
+    line_identifier = root.craft_path_identifier()
     line = [ele for ele in recipe_request.text.split('\n') if ele.strip().startswith(line_identifier)]
 
     # check whether we can craft the item
@@ -203,7 +238,7 @@ def create_item_craft_graph(item_id: int):
 
         # go through the table rows and check which items we need for the spell
         items_needed = []
-        for table_row in rs.findChildren('tr'):
+        for table_row in rs.find_all('tr'):
 
             # get all the td elements as they contain the padding
             td_elements = table_row.find_all('td')
@@ -284,32 +319,34 @@ def request_name(item: BaseNode, language: str = 'de'):
 
         # check that the page is german
         if language == 'de':
-            end_str = f' - {"Gegenstand" if isinstance(item, ItemNode) else "Zauber"} - Rising Gods - WotLK Database'
+            end_str = item.end_str(de=True)
             assert title.text.endswith(end_str), f'Title weird for {item.url}: {title}.'
         else:
-            end_str = f' - {"Item" if isinstance(item, ItemNode) else "Spell"} - Rising Gods - WotLK Database'
+            end_str = item.end_str(de=False)
             assert title.text.endswith(end_str), f'Title weird for {item.url}: {title}.'
         item_name = title.text[:-len(end_str)]
 
-        # check whether this spell is from some tradework
-        keywords = soup.find('meta', {'name': "keywords"})
-        keywords = str(keywords).split('"')[1].split(', ')
+        # get the infobox
+        infobox = str(soup.find('table', {"class": "infobox"}))
+
+        # get the lines with the requirements for skill
+        lines = [line.strip() for line in infobox.splitlines() if line.strip().startswith('Markup.printHtml("')]
+
+        # initialize some names
         profession_name = ""
         cooldowns = 0
         skill_level = 0
 
         # get the infobox
-        if keywords[-1] == 'Professions' or keywords[-1] == 'Berufe':
+        if len(lines) == 1 and ('Benötigt' in lines[0] or 'Requires' in lines[0]):
 
-            # get the profession name
-            profession_name = keywords[-2]
+            # get the profession id
+            match = re.search(r"\[skill=(\d+)]", lines[0])
+            if match:
+                skill_id = match.group(1)
+                profession_name, _, _, _ = request_name(SkillNode(int(skill_id)), language=language)
 
-            # get the infobox
-            infobox = str(soup.find('table', {"class": "infobox"}))
-
-            # get the lines with the requirements for skill
-            lines = [line.strip() for line in infobox.splitlines() if line.strip().startswith('Markup.printHtml("')]
-            assert len(lines) == 1, 'Could not find spell specification.'
+            # parse the infobox lines
             lines = re.findall(r'\[color=r\d+]\d+\[/color]', lines[0])
             if len(lines) >= 1:
                 lines = re.findall(r"]\d+\[", lines[0])
@@ -318,7 +355,7 @@ def request_name(item: BaseNode, language: str = 'de'):
             # get the cooldown if there is
             table = soup.find('table', {"class": "grid", "id": "spelldetails"})
             assert table is not None, 'Could not find the details table.'
-            cooldowns = [child.text for child in table.findChildren('tr', recursive=True)
+            cooldowns = [child.text for child in table.find_all('tr', recursive=True)
                          if 'Cooldown' in child.text or 'Abklingzeit' in child.text]
             assert len(cooldowns) == 1, 'There are more cooldown than expected.'
             cooldowns = cooldowns[0].strip()
@@ -344,19 +381,23 @@ def request_name(item: BaseNode, language: str = 'de'):
 def test():
 
     # get some names for spells and items
-    request_name(ItemNode(22854))
-    request_name(SpellNode(66658))
-    request_name(SpellNode(28589))
-    request_name(SpellNode(54222))
-    request_name(SpellNode(53812))
-    request_name(SpellNode(60893))
+    print(request_name(ItemNode(22854)))
+    print(request_name(ItemNode(22854), language='en'))
+    print(request_name(SpellNode(66658)))
+    print(request_name(SpellNode(66658), language='en'))
+    print(request_name(SpellNode(28589)))
+    print(request_name(SpellNode(54222)))
+    print(request_name(SpellNode(53812)))
+    print(request_name(SpellNode(60893)))
+    print(request_name(SpellNode(60893), language='en'))
 
     # request not existing item
     request_name(SpellNode(0))
     request_name(ItemNode(0))
 
     # get a craft graph
-    create_item_craft_graph(29520)
+    root = create_item_craft_graph(29520)
+    root.print_subtree()
     create_item_craft_graph(49906)
 
 
