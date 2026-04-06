@@ -12,7 +12,8 @@ from bs4 import BeautifulSoup
 
 
 class BaseNode:
-    base_url: str = "https://db.rising-gods.de"
+    # base_url: str = "https://db.rising-gods.de"
+    base_url: str = "https://wotlkdb.com/"
     query_parameter: str
     marked: bool = False
 
