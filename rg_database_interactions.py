@@ -171,7 +171,7 @@ def create_item_craft_graph(item_id: int):
     request_count = 1
 
     # get the spells that belong to the item
-    line_identifier = 'new Listview({"template":"spell","id":"created-by"'
+    line_identifier = 'new Listview({"id":"created-by"'
     line = [ele for ele in recipe_request.text.split('\n') if ele.strip().startswith(line_identifier)]
 
     # check whether we can craft the item

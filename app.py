@@ -250,11 +250,11 @@ def analyzer_page():
 
         # make the line chart
         c = alt.Chart(selected_df).mark_line(point=True).encode(x="Date", y="Price",
-                                                                  color=alt.Color("Name").legend(orient="bottom",
-                                                                                                 labelLimit=0,
-                                                                                                 symbolLimit=0,
-                                                                                                 columns=4),
-                                                                  tooltip=["Date", "Name", 'Gold'])
+                                                                color=alt.Color("Name").legend(orient="bottom",
+                                                                                               labelLimit=0,
+                                                                                               symbolLimit=0,
+                                                                                               columns=4),
+                                                                tooltip=["Date", "Name", 'Gold'])
         st.altair_chart(c, use_container_width=True)
 
     # style the dataframe
@@ -537,11 +537,19 @@ def crafter_page():
 
         # print the flow to the page
         if st.toggle("Show the graph", key='Show-Graph-Button'):
-            state, _ = ccf.create_flow(root, recent_prices, spells)
-            st.session_state.curr_state = stflow.streamlit_flow('static_flow', state,
-                                                                show_controls=False, fit_view=True,
-                                                                show_minimap=True, hide_watermark=True,
-                                                                layout=stflow.layouts.TreeLayout(direction='right'))
+
+            # check whether we already have the flow
+            if "curr_state_id" in st.session_state and root.id != st.session_state.curr_state_id:
+                st.session_state.curr_state, _ = ccf.create_flow(root, recent_prices, spells)
+                st.session_state.curr_state_id = root.id
+
+            stflow.streamlit_flow('static_flow', st.session_state.curr_state,
+                                  show_controls=False, fit_view=True,
+                                  show_minimap=True, hide_watermark=True,
+                                  layout=stflow.layouts.TreeLayout(direction='right'))
+        else:
+            st.session_state.curr_state = None
+            st.session_state.curr_state_id = None
 
         # write out all the option
         link_list = [f"{root.base_url}/?item={ele}" for ele, _ in cheap_combo]
