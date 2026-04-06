@@ -390,6 +390,18 @@ def reset_button():
     st.session_state['Show-Graph-Button'] = False
 
 
+@st.fragment
+def flow_fragment():
+    """
+    This function allows us to prevent redraws of the page if the user interacts only with the graph.
+    :return:
+    """
+    st.session_state.curr_flow = stflow.streamlit_flow('static_flow', st.session_state.curr_state,
+                                                       show_controls=False, fit_view=True,
+                                                       show_minimap=True, hide_watermark=True,
+                                                       layout=stflow.layouts.TreeLayout(direction='right'))
+
+
 def crafter_page():
     logger = logging.getLogger('auctionator')
 
@@ -543,10 +555,8 @@ def crafter_page():
                 st.session_state.curr_state, _ = ccf.create_flow(root, recent_prices, spells)
                 st.session_state.curr_state_id = root.id
 
-            stflow.streamlit_flow('static_flow', st.session_state.curr_state,
-                                  show_controls=False, fit_view=True,
-                                  show_minimap=True, hide_watermark=True,
-                                  layout=stflow.layouts.TreeLayout(direction='right'))
+            # run the flow graph in a fragment
+            flow_fragment()
         else:
             st.session_state.curr_state = None
             st.session_state.curr_state_id = None
