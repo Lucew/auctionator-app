@@ -60,7 +60,7 @@ def create_flow(root: rgdb.ItemNode, recent_prices: collections.defaultdict[int:
                 flow_node = StreamlitFlowNode(id=f'{level+1}.{len(children)}', pos=(level*300, 50*len(children)),
                                               data={'content': create_content_str(child, recent_prices, spells)},
                                               node_type='default', source_position='right', target_position='left',
-                                              style={'border': '5px solid black'} if child.marked else dict())
+                                              style={'border': '5px solid black', "backgroundColor": "#C1E1C1"} if child.marked else dict())
 
                 # create a new edge
                 flow_edge = StreamlitFlowEdge(f'{flnode.id}-{flow_node.id}', str(flnode.id), str(flow_node.id),
