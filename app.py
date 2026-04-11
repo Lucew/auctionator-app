@@ -5,6 +5,7 @@ import logging
 import re
 import collections
 import os
+import typing
 
 import streamlit as st
 import altair as alt
@@ -15,6 +16,7 @@ import rg_database_interactions as rgdb
 import database_interactions as daint
 import create_crafter_flow as ccf
 import streamlit_utils as stut
+import optimizer as opt
 
 
 # make a cached function to get the data stuff
@@ -402,6 +404,23 @@ def flow_fragment():
                                                        layout=stflow.layouts.TreeLayout(direction='right'))
 
 
+def reset_flow_graph():
+    """
+    Redraw the graph and close the toggle.
+    :return:
+    """
+    st.session_state.curr_state_id = None
+    reset_button()
+
+
+def update_item_selection(update_list: typing.Iterable[str]):
+    current = st.session_state.available_selection
+    update_set = set(update_list)
+    not_yet_select = update_set - set(current)
+    current.extend(not_yet_select)
+    st.session_state.available_selection = current
+
+
 def crafter_page():
     logger = logging.getLogger('auctionator')
 
@@ -411,6 +430,10 @@ def crafter_page():
     # get all the items we have
     items = cached_get_items()
     spells, professions = cached_get_spells()
+
+    # create the field to put in items
+    # get the items and the dataframe to map the id
+    _, names, grouped_df, _ = cached_get_price_info()
 
     # get the item selection
     selection = st.number_input('Input the id of the item you want to craft (e.g., 49906)', 0, max(items.keys()), 49906,
@@ -481,70 +504,65 @@ def crafter_page():
         excluded_strings = set(col2.multiselect('Exclude Names', options, key='crafter_multi_exclude',
                                                 default=default_vals, on_change=reset_button))
 
+    # prune the graph after the configuration of available crafts and cooldowns
+    deleted_children = prune_graph(root, allowed_professions, maximum_cooldown, profession_skill, excluded_items,
+                                   excluded_spells, excluded_strings)
+
+    # get the reference list
+    reference_list = root.get_reference_list()
+    necessary_items = set(node.name for nodelist in reference_list.values() for node in nodelist if isinstance(node, rgdb.ItemNode))
+
+    # make a selection to specify available items
+    with st.expander("Available Items", expanded=False):
+        # get the item selection
+        st.write("Select the items you have available.")
+        available_selection = st.multiselect("Item IDs", names, on_change=reset_flow_graph,
+                                             key='available_selection')
+
+        # make some columns
+        cols = st.columns(3)
+
+        # create the inputs per item
+        item_numbers = dict()
+        for idx, item in enumerate(available_selection):
+            # get the current column
+            currcol = cols[idx % 3]
+
+            # workaround for hc/non hc items with double id
+            item_id = grouped_df.loc[item, 'Id']
+            if isinstance(item_id, pd.Series):
+                item_id = item_id.min()
+
+            # get the id
+            # TODO: Schulterplatten des tobenden Ungetüms sind doppelte id (hc, nicht hc)
+            item_id = int(item_id)
+
+            # make a text and a number select
+            item_numbers[item_id] = currcol.number_input(f"{item} - Number", min_value=0, value=0,
+                                                         on_change=reset_flow_graph)
+
+        # add a button that adds the items that occur in the current graph
+        st.button("Input Graph Items", on_click=lambda: update_item_selection(necessary_items))
+
     # request the rising gods database for the crafting graph
     with st.spinner('Creating the Graph...'):
-
-        # prune the graph
-        deleted_children = prune_graph(root, allowed_professions, maximum_cooldown, profession_skill, excluded_items,
-                                       excluded_spells, excluded_strings)
-
-        # get the reference list
-        reference_list = root.get_reference_list()
 
         # get the prices for the reference list
         recent_prices = daint.get_most_recent_item_price()
         recent_prices = collections.defaultdict(lambda: float('inf'), recent_prices)
 
-        # make dfs through the item tree
-        def dfs(node):
-            # we reached a leaf
-            if len(node.children) == 0:
-                assert isinstance(node, rgdb.ItemNode), 'Something is off.'
-
-                # every dfs returns the current price, the current items that are necessary and the path it took
-                return recent_prices[node.id]*node.required_amount, [(node.id, node.required_amount)], [node]
-
-            # if we are a spell node, we need to sum the items we use
-            if isinstance(node, rgdb.SpellNode):
-                # get all the items we need
-                curr_price = [dfs(child) for child in node.children.values()]
-
-                # fuse the items together
-                item_dict = collections.defaultdict(int)
-                tmp_price = 0
-                tmp_path = []
-                for pprice, item_path, path in curr_price:
-                    for __item, number in item_path:
-                        item_dict[__item] += number
-                    tmp_path.extend(path)
-                    tmp_price += pprice
-
-                # append the own spell
-                tmp_path.append(node)
-
-                # get the path again
-                curr_price = (tmp_price, list(item_dict.items()), tmp_path)
-
-            # if we are an item node, we need to find the cheapest option
-            elif isinstance(node, rgdb.ItemNode):
-
-                # check the options to craft the item
-                curr_price = min((dfs(child) for child in node.children.values()), key=lambda x: x[0])
-
-                # check the option to just take the item itself
-                own_price = recent_prices[node.id]*node.required_amount
-                if own_price < curr_price[0]:
-                    curr_price = (own_price, [(node.id, node.required_amount)], [node])
-            else:
-                raise ValueError('Something is off.')
-            return curr_price
-        # get the cheapest combination
+        # get the cheapest combinations
         __ts = time.perf_counter()
-        cheap_price, cheap_combo, best_path = dfs(root)
+        best_options = opt.k_best_crafting_paths(
+            root=root,
+            recent_prices=recent_prices,
+            available_items=item_numbers,  # user inventory
+            k=3,
+        )
 
         # go through the nodes that are in the path and mark them
-        if cheap_price != float('inf'):
-            for __node in best_path:
+        if best_options[0][0] != float('inf'):
+            for __node in best_options[0][2]:
                 __node.mark()
 
         # print the flow to the page
@@ -552,6 +570,7 @@ def crafter_page():
 
             # check whether we already have the flow
             if "curr_state_id" in st.session_state and root.id != st.session_state.curr_state_id:
+                # make the flow graph using the cheapest path
                 st.session_state.curr_state, _ = ccf.create_flow(root, recent_prices, spells)
                 st.session_state.curr_state_id = root.id
 
@@ -561,15 +580,21 @@ def crafter_page():
             st.session_state.curr_state = None
             st.session_state.curr_state_id = None
 
-        # write out all the option
-        link_list = [f"{root.base_url}/?item={ele}" for ele, _ in cheap_combo]
-        if cheap_price == float('inf'):
-            st.warning(f'We did not have a price for any valid path for {root.id}', icon="⚠️")
-        else:
-            st.write('Best crafting path:')
-            st.markdown(daint.price2gold(cheap_price) +
-                        "-".join(f'[{items[ele][0]}]({linked}) ({number})'
-                                 for (ele, number), linked in zip(cheap_combo, link_list)))
+
+        for pdx, (cheap_price, cheap_combo, best_path, remaining) in enumerate(best_options):
+
+            # write out all the option
+            link_list = [f"{root.base_url}/?item={ele}" for ele, _ in cheap_combo]
+            if cheap_price == float('inf'):
+                st.warning(f'We did not have a price for any valid path for {root.id}', icon="⚠️")
+            else:
+                if pdx == 0:
+                    st.write('Best crafting path:')
+                else:
+                    st.write(f'Crafting path #{pdx}:')
+                st.markdown(daint.price2gold(cheap_price) +
+                            "-".join(f'[{items[ele][0]}]({linked}) ({number})'
+                                     for (ele, number), linked in zip(cheap_combo, link_list)))
         logger.info(f'Searching the graph for item {root.id} (name={items.get(root.id, ("NOT FOUND", ""))[0]}) '
                     f'took {time.perf_counter() - __ts:0.4f}s.')
     return reference_list
