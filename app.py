@@ -6,6 +6,9 @@ import re
 import collections
 import os
 import typing
+import zlib
+import base64
+import json
 
 import streamlit as st
 import altair as alt
@@ -17,6 +20,19 @@ import database_interactions as daint
 import create_crafter_flow as ccf
 import streamlit_utils as stut
 import optimizer as opt
+
+
+# https://chatgpt.com/c/69deac36-7300-8389-9441-1c7ce85b8722
+def encode_state(obj):
+    raw = json.dumps(obj, separators=(",", ":")).encode()
+    compressed = zlib.compress(raw)
+    return base64.urlsafe_b64encode(compressed).decode().rstrip("=")
+
+def decode_state(s):
+    padding = "=" * (-len(s) % 4)
+    compressed = base64.urlsafe_b64decode(s + padding)
+    raw = zlib.decompress(compressed)
+    return json.loads(raw)
 
 
 # make a cached function to get the data stuff
@@ -194,10 +210,10 @@ def side_bar():
     # make a dataframe out of the items
     cl_config = {"_index": st.column_config.NumberColumn("Id", format="%d")}
     st.sidebar.header('Item Finder')
-    search = st.sidebar.text_input("Search for items")
+    search = st.sidebar.text_input("Search for items").capitalize()
     df = cached_get_items_df()
     st.sidebar.dataframe(df[(df["Name (en)"].str.contains(search)) | (df["Name (de)"].str.contains(search))],
-                         height=100, use_container_width=True, column_config=cl_config)
+                         height=200, use_container_width=True, column_config=cl_config)
 
     # make a button to invalidate the cache
     st.sidebar.header('Page Settings')
@@ -284,42 +300,41 @@ def analyzer_page():
 
     # make a sidebar
     with st.sidebar:
+        with st.expander("File Download"):
 
-        st.sidebar.header('File Download')
+            # make a selection for the sidebar
+            download_type = st.selectbox('Choose the download type', options=['All', 'Selection'])
 
-        # make a selection for the sidebar
-        download_type = st.selectbox('Choose the download type', options=['All', 'Selection'])
+            # make the dataframe selection
+            if download_type == 'All':
+                curr_df = df
+            elif download_type == 'Selection':
+                curr_df = selected_df
+            else:
+                raise ValueError('Unspecified download!')
 
-        # make the dataframe selection
-        if download_type == 'All':
-            curr_df = df
-        elif download_type == 'Selection':
-            curr_df = selected_df
-        else:
-            raise ValueError('Unspecified download!')
+            # make a csv download button
+            cs_dwn = st.download_button(
+                label="Download data as CSV",
+                data=convert_df(curr_df, r'text\csv'),
+                file_name=f"{'selected_' if download_type == 'Selection' else ''}data.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+            if cs_dwn:
+                logger.info(f'Download CSV-File {"(selection)" if download_type == "Selection" else ""}.')
 
-        # make a csv download button
-        cs_dwn = st.download_button(
-            label="Download data as CSV",
-            data=convert_df(curr_df, r'text\csv'),
-            file_name=f"{'selected_' if download_type == 'Selection' else ''}data.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-        if cs_dwn:
-            logger.info(f'Download CSV-File {"(selection)" if download_type == "Selection" else ""}.')
-
-        # Excel download button
-        # MIME type: https://stackoverflow.com/a/1964182
-        exc_down = st.download_button(
-            label="Download data as XLSX",
-            data=convert_df(curr_df, r'application/vnd.ms-excel'),
-            file_name=f"{'selected_' if download_type == 'Selection' else ''}data.xlsx",
-            mime="text/csv",
-            use_container_width=True,
-        )
-        if exc_down:
-            logger.info(f'Download XLSX-File {"(selection)" if download_type == "Selection" else ""}.')
+            # Excel download button
+            # MIME type: https://stackoverflow.com/a/1964182
+            exc_down = st.download_button(
+                label="Download data as XLSX",
+                data=convert_df(curr_df, r'application/vnd.ms-excel'),
+                file_name=f"{'selected_' if download_type == 'Selection' else ''}data.xlsx",
+                mime="text/csv",
+                use_container_width=True,
+            )
+            if exc_down:
+                logger.info(f'Download XLSX-File {"(selection)" if download_type == "Selection" else ""}.')
 
 
 def prune_graph(graph: rgdb.BaseNode, allowed_professions: set[str], maximum_cooldown: int,
