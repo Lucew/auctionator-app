@@ -6,9 +6,6 @@ import re
 import collections
 import os
 import typing
-import zlib
-import base64
-import json
 
 import streamlit as st
 import altair as alt
@@ -20,19 +17,7 @@ import database_interactions as daint
 import create_crafter_flow as ccf
 import streamlit_utils as stut
 import optimizer as opt
-
-
-# https://chatgpt.com/c/69deac36-7300-8389-9441-1c7ce85b8722
-def encode_state(obj):
-    raw = json.dumps(obj, separators=(",", ":")).encode()
-    compressed = zlib.compress(raw)
-    return base64.urlsafe_b64encode(compressed).decode().rstrip("=")
-
-def decode_state(s):
-    padding = "=" * (-len(s) % 4)
-    compressed = base64.urlsafe_b64decode(s + padding)
-    raw = zlib.decompress(compressed)
-    return json.loads(raw)
+import state_serializer as stateser
 
 
 # make a cached function to get the data stuff
@@ -140,26 +125,35 @@ def item_selector(names: list[str], multiselect: bool = True):
 
     # make an item selector with regular expression filter
     col1, col2 = st.columns(2)
-    regular_matched_items = []
+    regular_matched_items = set(names)
     if multiselect:
         with col2:
             regular_expression = st.text_input('Input (regular) filter expressions for the items.')
             if regular_expression:
                 try:
                     regular_expression = re.compile(regular_expression)
-                    regular_matched_items = list(filter(lambda x: bool(regular_expression.findall(x)), names))
+                    regular_matched_items = set(filter(lambda x: bool(regular_expression.findall(x)), names))
+                    print(regular_matched_items)
                 except re.error as e:
                     st.warning(f'Regex Pattern was not valid: {str(e)}', icon="⚠️")
         with col1:
 
             # make the multiselect and keep the session state
             default_vals = st.session_state.get("multi_select_items", names[:1])
-            default_vals = list(set(default_vals) | set(regular_matched_items))
+            default_vals = [ele for ele in default_vals if ele in regular_matched_items]
             selection = set(st.multiselect('Choose the items of interest', options=names, default=default_vals,
                                            key="multi_select_items"), )
     else:
         selection = st.selectbox('Choose the items of interest', options=names)
     return selection
+
+
+def get_and_set_state():
+    if "state" in st.query_params:
+        param_dict = st.query_params["state"]
+        state_decoded = stateser.decode_state(param_dict)
+        for key, val in state_decoded.items():
+            st.session_state[key] = val
 
 
 def side_bar():
@@ -221,6 +215,24 @@ def side_bar():
         st.cache_data.clear()
         st.cache_resource.clear()
 
+    st.sidebar.header('Session State (Experimental)')
+    col1, col2, col3 = st.sidebar.columns(3)
+    # save the session state into the url
+    if col1.button('Save State'):
+        state = st.session_state.to_dict()
+        encoded = stateser.encode_state(state)
+        st.query_params.from_dict({"state": encoded})
+
+    # get the state from the url
+    if col2.button('Read State'):
+        # get the query parameters
+        get_and_set_state()
+
+    # get the state from the url
+    if col3.button('Reset State'):
+        # reset the params
+        st.query_params.from_dict(dict())
+
     # put my name on the page
     styl = f"""  
     <div style="position: relative">
@@ -260,7 +272,8 @@ def analyzer_page():
 
         # make a date selection
         time1, time2 = st.slider('Date Range', min_date, max_date+datetime.timedelta(days=1),
-                                 step=datetime.timedelta(days=1), value=(min_date, max_date+datetime.timedelta(days=1)))
+                                 step=datetime.timedelta(days=1), value=(min_date, max_date+datetime.timedelta(days=1)),
+                                 key='date-range-slider')
 
         # apply the time selection
         selected_df = selected_df[(pd.Timestamp(time1) <= selected_df['Date']) &
@@ -282,7 +295,7 @@ def analyzer_page():
                  "Count": st.column_config.NumberColumn(format="%d")}
 
     # make a checkbox whether to apply selection
-    apply_selection = st.checkbox('Apply Selection', value=False)
+    apply_selection = st.checkbox('Apply Selection', value=False, key='apply-selection-checkbox')
 
     # display the dataframe
     if apply_selection:
@@ -452,7 +465,7 @@ def crafter_page():
 
     # get the item selection
     selection = st.number_input('Input the id of the item you want to craft (e.g., 49906)', 0, max(items.keys()), 49906,
-                                on_change=reset_button)
+                                on_change=reset_button, key='crafter-item-id-selection')
 
     # Write the item
     if selection not in items:
@@ -483,16 +496,17 @@ def crafter_page():
         profession_list = list(set(spells[spell.id][3] for spell in root.dfs(target_class=rgdb.SpellNode)
                                    if spell.id in spells and spells[spell.id][3]))
         allowed_professions = set(col1.multiselect('Select allowed professions', profession_list, profession_list,
-                                                   on_change=reset_button))
+                                                   on_change=reset_button, key='allowed-professions-selection'))
 
         # create a number input for the profession level
         profession_skill = dict()
         for profession in allowed_professions:
             profession_skill[profession] = col1.number_input(f'{profession} - Maximum Skill', 0, 450, 450,
-                                                             on_change=reset_button)
+                                                             on_change=reset_button, key=f'profession-{profession}-skill-selection')
 
         # make a number input how much cooldown any spell can have
-        maximum_cooldown = col2.number_input('Maximum cooldown (s)', 0, 1_000_000, 100_000, on_change=reset_button)
+        maximum_cooldown = col2.number_input('Maximum cooldown (s)', 0, 1_000_000, 100_000, on_change=reset_button,
+                                             key='maximum-cooldown-selection')
 
         # create a multiselect excluded spells
         options = set(spell.id for spell in root.dfs(target_class=rgdb.SpellNode))
@@ -554,7 +568,7 @@ def crafter_page():
 
             # make a text and a number select
             item_numbers[item_id] = currcol.number_input(f"{item} - Number", min_value=0, value=0,
-                                                         on_change=reset_flow_graph)
+                                                         on_change=reset_flow_graph, key=f"{item} - Number")
 
         # add a button that adds the items that occur in the current graph
         st.button("Input Graph Items", on_click=lambda: update_item_selection(necessary_items))
