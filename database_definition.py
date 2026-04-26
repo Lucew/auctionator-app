@@ -1,8 +1,10 @@
+import datetime
+
 from sqlalchemy import ForeignKey
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
-from sqlalchemy import Column, TIMESTAMP, Integer, String, Float, Boolean
+from sqlalchemy import Column, TIMESTAMP, Integer, String, Float, Boolean, UniqueConstraint, Index, DateTime, Text
 
 
 class Base(DeclarativeBase):
@@ -170,3 +172,43 @@ class SpellNames(Base):
     name_de: Mapped[str]
     name_en: Mapped[str]
     name_misc: Mapped[str]
+
+
+def utcnow() -> datetime.datetime:
+    # Store timestamps as naive UTC for SQLite simplicity.
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
+
+class BookmarkState(Base):
+    __tablename__ = "bookmark_state"
+    __table_args__ = (
+        UniqueConstraint("opaque_id", name="uq_bookmark_state_opaque_id"),
+        UniqueConstraint("dedupe_hash", name="uq_bookmark_state_dedupe_hash"),
+        Index("ix_bookmark_state_expires_at", "expires_at"),
+        Index("ix_bookmark_state_last_used_at", "last_used_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # This is the short id you put into the URL.
+    opaque_id: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Hash over normalized JSON + compatibility fields.
+    # Unique => deduplicates identical bookmark states.
+    dedupe_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Canonical JSON string
+    json_state: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Compatibility metadata
+    state_version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow
+    )
+    last_used_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow
+    )
+    expires_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, nullable=False
+    )

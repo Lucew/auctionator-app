@@ -18,6 +18,7 @@ import create_crafter_flow as ccf
 import streamlit_utils as stut
 import optimizer as opt
 import state_serializer as stateser
+import state_database_interactions as statedbi
 
 
 # make a cached function to get the data stuff
@@ -119,50 +120,87 @@ def cache_request_name(item: rgdb.BaseNode, language: str):
     return rgdb.request_name(item, language)
 
 
-def item_selector(names: list[str], multiselect: bool = True):
+def item_selector(names: list[str]):
 
-    # check whether we wanna do a multiselect
+    # get the default name for the starting page
+    default = names[0]
+    if len(names) >= 6:
+        default = names[5]
 
-    # make an item selector with regular expression filter
-    col1, col2 = st.columns(2)
-    regular_matched_items = set(names)
-    if multiselect:
-        with col2:
-            regular_expression = st.text_input('Input (regular) filter expressions for the items.')
-            if regular_expression:
-                try:
-                    regular_expression = re.compile(regular_expression)
-                    regular_matched_items = set(filter(lambda x: bool(regular_expression.findall(x)), names))
-                    print(regular_matched_items)
-                except re.error as e:
-                    st.warning(f'Regex Pattern was not valid: {str(e)}', icon="⚠️")
-        with col1:
-
-            # make the multiselect and keep the session state
-            default_vals = st.session_state.get("multi_select_items", names[:1])
-            default_vals = [ele for ele in default_vals if ele in regular_matched_items]
-            selection = set(st.multiselect('Choose the items of interest', options=names, default=default_vals,
-                                           key="multi_select_items"), )
-    else:
-        selection = st.selectbox('Choose the items of interest', options=names)
+    if "multi_select_items" in st.session_state:
+        default = None
+    selection = set(st.multiselect('Choose the items of interest', options=names, default=default, key="multi_select_items"),)
     return selection
 
 
-def get_and_set_state():
+def get_and_set_state(logger: logging.Logger):
     if "state" in st.query_params:
-        param_dict = st.query_params["state"]
-        state_decoded = stateser.decode_state(param_dict)
+
+        # get the state id from the string
+        state_id = st.query_params["state"]
+
+        # make the logging
+        logger.info(f'We will load state: {state_id}.')
+
+        # decode the state
+        state_decoded = stateser.decode_state(statedbi.load_bookmark_state(state_id))
         for key, val in state_decoded.items():
             st.session_state[key] = val
 
 
-def side_bar():
+def reset_segmented(key: str):
+    # get the logger
+    logger = logging.getLogger('auctionator')
+
+    # get the selection from the state
+    selection = st.session_state[key]
+    logger.info(f"State interaction selection: {selection}")
+
+    # save the session state into the url
+    if selection == 'Save':
+        # get the state as a dictionary
+        state = st.session_state.to_dict()
+
+        # encode the state to json
+        encoded = stateser.encode_state(state)
+
+        # save the state in the database and return state id
+        state_id = statedbi.store_bookmark_state(encoded, state_version=1)
+
+        # set the state into the url
+        st.query_params.from_dict({"state": state_id})
+
+    if selection == 'Load':
+        # get the query parameters
+        get_and_set_state(logger)
+
+    # delete the state from the url
+    if selection == 'Reset':
+        # reset the params
+        st.query_params.from_dict(dict())
+
+    st.session_state[key] = None
+
+
+def side_bar() -> [str | None]:
     # get the logger
     logger = logging.getLogger('auctionator')
 
     st.sidebar.title('Navigation')
+
+    # make the selection
+    # we use a on_change callback to immediately deactivate the selection again
+    segmented_key = "session-state-control-ignore"
+    st.sidebar.segmented_control("Session State (Experimental)", ['Load', "Save", "Reset"],
+                                 selection_mode="single",
+                                 width="stretch",
+                                 key=segmented_key,
+                                 on_change=lambda :reset_segmented(segmented_key))
+
+    # make the application head
     st.sidebar.header('Application')
-    choice = st.sidebar.selectbox('Choose Application', options=['Analyzer', 'Crafter', 'Extender'])
+    choice = st.sidebar.selectbox('Choose Application', options=['Analyzer', 'Crafter', 'Extender'],
+                                  key='page-name-selection')
 
     # create a file upload
     st.sidebar.header('File Upload')
@@ -207,31 +245,13 @@ def side_bar():
     search = st.sidebar.text_input("Search for items").capitalize()
     df = cached_get_items_df()
     st.sidebar.dataframe(df[(df["Name (en)"].str.contains(search)) | (df["Name (de)"].str.contains(search))],
-                         height=200, use_container_width=True, column_config=cl_config)
+                         height=200, width="stretch", column_config=cl_config)
 
     # make a button to invalidate the cache
     st.sidebar.header('Page Settings')
     if st.sidebar.button('Invalidate Cache'):
         st.cache_data.clear()
         st.cache_resource.clear()
-
-    st.sidebar.header('Session State (Experimental)')
-    col1, col2, col3 = st.sidebar.columns(3)
-    # save the session state into the url
-    if col1.button('Save State'):
-        state = st.session_state.to_dict()
-        encoded = stateser.encode_state(state)
-        st.query_params.from_dict({"state": encoded})
-
-    # get the state from the url
-    if col2.button('Read State'):
-        # get the query parameters
-        get_and_set_state()
-
-    # get the state from the url
-    if col3.button('Reset State'):
-        # reset the params
-        st.query_params.from_dict(dict())
 
     # put my name on the page
     styl = f"""  
@@ -242,6 +262,27 @@ def side_bar():
     """
     st.sidebar.markdown(styl, unsafe_allow_html=True)
     return choice
+
+
+def update_time():
+    time_select = st.session_state.get('time-shortcut-ignore')
+    'date-range-slider-ignore'
+    st.session_state['time-shortcut-ignore'] = None
+
+
+TIME_SHORTCUTS = {
+    "Week": pd.DateOffset(weeks=1),
+    "Month": pd.DateOffset(months=1),
+    "Quarter": pd.DateOffset(months=3),
+    "Year": pd.DateOffset(years=1),
+}
+
+
+def clamp_range(start: datetime.datetime, end: datetime.datetime,
+                max_date: datetime.datetime, min_date: datetime.datetime):
+    start = max(pd.Timestamp(start), pd.Timestamp(min_date))
+    end = min(pd.Timestamp(end), pd.Timestamp(max_date)+datetime.timedelta(days=1))
+    return start.to_pydatetime(), end.to_pydatetime()
 
 
 def analyzer_page():
@@ -270,10 +311,29 @@ def analyzer_page():
         min_date = selected_df['Date'].min().to_pydatetime()
         max_date = selected_df['Date'].max().to_pydatetime()
 
+        # make two columns for the time and the pills
+        col1, col2 = st.columns((8,2))
+
+
+        # make the pill options
+        time_shortcut = col2.pills(
+            "Quick Range",
+            options=list(TIME_SHORTCUTS.keys()),
+            selection_mode="single",
+        )
+
+        # check whether we selected a time shortcut
+        if time_shortcut is None:
+            default_slider_val = (min_date, max_date+datetime.timedelta(days=1))
+        else:
+            default_slider_val = ((max_date-TIME_SHORTCUTS[time_shortcut]).to_pydatetime(), max_date+datetime.timedelta(days=1))
+
         # make a date selection
-        time1, time2 = st.slider('Date Range', min_date, max_date+datetime.timedelta(days=1),
-                                 step=datetime.timedelta(days=1), value=(min_date, max_date+datetime.timedelta(days=1)),
-                                 key='date-range-slider')
+        time1, time2 = col1.slider('Date Range',
+                                   min_value=min_date,
+                                   max_value=max_date+datetime.timedelta(days=1),
+                                   step=datetime.timedelta(days=1),
+                                   value=default_slider_val)
 
         # apply the time selection
         selected_df = selected_df[(pd.Timestamp(time1) <= selected_df['Date']) &
@@ -286,7 +346,7 @@ def analyzer_page():
                                                                                                symbolLimit=0,
                                                                                                columns=4),
                                                                 tooltip=["Date", "Name", 'Gold'])
-        st.altair_chart(c, use_container_width=True)
+        st.altair_chart(c, width="stretch")
 
     # style the dataframe
     cl_config = {"Prices": st.column_config.LineChartColumn("Prices"),
@@ -309,7 +369,7 @@ def analyzer_page():
     # visualize the dataframe
     st.write(f'Description of Price Distribution for {"the selected" if apply_selection else "all"}'
              f' Items (click columns to sort):')
-    st.dataframe(display_df, column_config=cl_config, hide_index=True, use_container_width=True)
+    st.dataframe(display_df, column_config=cl_config, hide_index=True, width="stretch")
 
     # make a sidebar
     with st.sidebar:
@@ -332,7 +392,7 @@ def analyzer_page():
                 data=convert_df(curr_df, r'text\csv'),
                 file_name=f"{'selected_' if download_type == 'Selection' else ''}data.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
             )
             if cs_dwn:
                 logger.info(f'Download CSV-File {"(selection)" if download_type == "Selection" else ""}.')
@@ -344,7 +404,7 @@ def analyzer_page():
                 data=convert_df(curr_df, r'application/vnd.ms-excel'),
                 file_name=f"{'selected_' if download_type == 'Selection' else ''}data.xlsx",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
             )
             if exc_down:
                 logger.info(f'Download XLSX-File {"(selection)" if download_type == "Selection" else ""}.')

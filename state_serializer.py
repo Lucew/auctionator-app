@@ -7,8 +7,6 @@ import datetime
 
 import pandas as pd
 
-_MISSING = object()
-_JSON_KEY_TYPES = (str, int, float, bool, type(None))
 
 # https://chatgpt.com/c/69deba47-3538-8394-b305-2c4639d09a12
 class DateTimePandasEncoder(json.JSONEncoder):
@@ -62,13 +60,14 @@ class DateTimePandasDecoder(json.JSONDecoder):
 
 
 # https://chatgpt.com/c/69deac36-7300-8389-9441-1c7ce85b8722
-def encode_state(obj):
-    raw = json.dumps(obj, separators=(",", ":"), cls=DateTimePandasEncoder).encode()
-    compressed = zlib.compress(raw)
-    return base64.urlsafe_b64encode(compressed).decode().rstrip("=")
+def encode_state(state_dict: dict):
 
-def decode_state(s):
-    padding = "=" * (-len(s) % 4)
-    compressed = base64.urlsafe_b64decode(s + padding)
-    raw = zlib.decompress(compressed)
-    return json.loads(raw, cls=DateTimePandasDecoder)
+    # copy the state dict and ignore stuff that has ignore in if
+    state_dict = {key: val for key, val in state_dict.items() if not key.endswith("ignore")}
+
+    # write to json
+    raw = json.dumps(state_dict, separators=(",", ":"), cls=DateTimePandasEncoder).encode()
+    return raw
+
+def decode_state(json_str_dict: str):
+    return json.loads(json_str_dict, cls=DateTimePandasDecoder)
