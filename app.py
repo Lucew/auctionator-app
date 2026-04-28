@@ -320,6 +320,7 @@ def analyzer_page():
             "Quick Range",
             options=list(TIME_SHORTCUTS.keys()),
             selection_mode="single",
+            key='time-shortcut-button'
         )
 
         # check whether we selected a time shortcut
@@ -477,7 +478,7 @@ def prune_graph(graph: rgdb.BaseNode, allowed_professions: set[str], maximum_coo
 
 
 def reset_button():
-    st.session_state['Show-Graph-Button'] = False
+    st.session_state['Show-Graph-Button-ignore'] = False
 
 
 @st.fragment
@@ -655,7 +656,7 @@ def crafter_page():
                 __node.mark()
 
         # print the flow to the page
-        if st.toggle("Show the graph", key='Show-Graph-Button'):
+        if st.toggle("Show the graph", key='Show-Graph-Button-ignore'):
 
             # check whether we already have the flow
             if "curr_state_id" in st.session_state and root.id != st.session_state.curr_state_id:
